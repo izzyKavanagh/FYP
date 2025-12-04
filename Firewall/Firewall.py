@@ -1,6 +1,8 @@
 import logging
 from datetime import datetime
 from scapy.all import IP, TCP, UDP, ICMP
+from netfilterqueue import NetfilterQueue
+
 
 # Create loggers
 logging.basicConfig(level=logging.INFO)
@@ -55,3 +57,20 @@ def process_packet(pkt):
     log_allowed(info)
 
     pkt.accept()
+
+def main():
+    print("[+] Firewall started — logging only mode")
+    print("[+] Logs saved to allowed.log and denied.log")
+    print("[+] Press CTRL+C to stop\n")
+
+    nfq = NetfilterQueue()
+    nfq.bind(0, process_packet)
+
+    try:
+        nfq.run()
+    except KeyboardInterrupt:
+        print("\n[-] Firewall stopped")
+
+
+if __name__ == "__main__":
+    main()
