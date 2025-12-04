@@ -45,3 +45,13 @@ def parse_packet(pkt):
         sport = dport = "-"
 
     return f"{protocol} {src}:{sport} -> {dst}:{dport}"
+
+def process_packet(pkt):
+    """
+    Now: log the packet as allowed and accept it
+    Later: insert rules, connection tracking, ml, etc
+    """
+    info = parse_packet(pkt)
+    log_allowed(info)
+
+    pkt.accept()
