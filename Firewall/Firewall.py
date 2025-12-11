@@ -49,14 +49,34 @@ def parse_packet(pkt):
     return f"{protocol} {src}:{sport} -> {dst}:{dport}"
 
 def process_packet(pkt):
-    """
-    Now: log the packet as allowed and accept it
-    Later: insert rules, connection tracking, ml, etc
-    """
+     # Parse packet and log initial info
+    scapy_pkt = IP(pkt.get_payload())
     info = parse_packet(pkt)
     log_allowed(info)
 
-    pkt.accept()
+    # Allow Rules -----------------------------
+    
+    # Allow all ICMP traffic
+    if scapy_pkt.haslayer(ICMP):
+        log_allowed(info)
+        pkt.accept()
+        return
+
+    # Allow HTTP and HTTPS traffic
+    if scapy_pkt.haslayer(TCP) and scapy_pkt[TCP].dport in (80, 443):
+        log_allowed(info)
+        pkt.accept()
+        return
+    
+    # Allow DNS queries
+    if scapy_pkt.haslayer(UDP) and scapy_pkt[UDP].dport == 53:
+        log_allowed(info)
+        pkt.accept()
+        return
+    
+    # Deny Rules ------------------------------
+    log_denied(info)
+    pkt.drop()
 
 def main():
     print("[+] Firewall started — logging only mode")
