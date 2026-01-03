@@ -20,11 +20,7 @@ deny_logger.addHandler(deny_handler)
 # Create table to track established connections - allows stateful connection tracking
 connection_table = set()
 
-def log_allowed(info):
-    allow_logger.info(f"{datetime.now()} ALLOW {info}")
-
-def log_denied(info):
-    deny_logger.info(f"{datetime.now()} DROP {info}")
+# ----------------------- HELPER METHODS -----------------------
 
 # helper method for extracting connection information from a packet
 def extract_connection_info(pkt):
@@ -81,6 +77,32 @@ def is_established(pkt):
     (src, dst, sport, dport, protocol, "OUTBOUND") in connection_table )
 
 
+def extract_print_info(pkt):
+    proto, sport, dport = extract_connection_info(pkt)
+
+    return {
+        "proto": proto or f"OTHER({pkt.proto})",
+        "src": f"{pkt.src}:{sport}",
+        "dst": f"{pkt.dst}:{dport}",
+    }
+
+
+def log_event(action, rule, direction, info):
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if action == "ALLOW":
+        print(
+            f"[{ts}] Allowed {info['proto']} traffic ({rule}) "
+            f"{direction} from {info['src']} to {info['dst']}"
+        )
+    else:
+        print(
+            f"[{ts}] Blocked {info['proto']} traffic ({rule}) "
+            f"{direction} from {info['src']} to {info['dst']}"
+        )
+
+# ----------------------- FIREWALL LOGIC -----------------------
+
 def parse_packet(pkt):
     scapy_pkt = IP(pkt.get_payload())
     protocol, sport, dport = extract_connection_info(scapy_pkt)
@@ -93,7 +115,7 @@ def parse_packet(pkt):
 
 
 def process_packet(pkt):
-     # Parse packet and log initial info
+    # Parse packet and log initial info
     scapy_pkt = IP(pkt.get_payload())
     info = parse_packet(pkt)
 
@@ -101,38 +123,38 @@ def process_packet(pkt):
     
     # allow established connections
     if is_established(scapy_pkt):
-        log_allowed(f"{info} [ESTABLISHED]")
+        log_event("ALLOW", "connection tracking", "inbound", info)
         pkt.accept()
         return
     
     # Allow all ICMP traffic
     if scapy_pkt.haslayer(ICMP):
         # ICMP traffic is not tracked as it is stateless
-        log_allowed(f"{info} [NEW]")
+        log_event("ALLOW", "ICMP allowed", "outbound", info)
         pkt.accept()
         return
 
     # Allow HTTP and HTTPS traffic
     if scapy_pkt.haslayer(TCP) and scapy_pkt[TCP].dport in (80, 443):
-        log_allowed(f"{info} [NEW]")
+        log_event("ALLOW", "ICMP allowed", "outbound", info)
         track_connection(scapy_pkt)
         pkt.accept()
         return
     
     # Allow DNS queries
     if scapy_pkt.haslayer(UDP) and scapy_pkt[UDP].dport == 53:
-        log_allowed(f"{info} [NEW]")
+        log_event("ALLOW", "DNS query", "outbound", info)
         track_connection(scapy_pkt)
         pkt.accept()
         return
     
     # Deny all other traffic & log
-    log_denied(info)
+    log_event("BLOCK", "default deny", "outbound", info)
     pkt.drop()
 
+
 def main():
-    print("[+] Firewall started — logging only mode")
-    print("[+] Logs saved to allowed.log and denied.log")
+    print("[+] Firewall started\n")
     print("[+] Press CTRL+C to stop\n")
 
     nfq = NetfilterQueue()
