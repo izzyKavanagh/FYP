@@ -27,29 +27,26 @@ def log_denied(info):
     deny_logger.info(f"{datetime.now()} DROP {info}")
 
 # helper method for extracting connection information from a packet
-def get_flow_id(pkt):
-    # create variables to store packet's protocol and ports
-    protocol = None
-    sport = dport = None
-
-    # Extract packet's protocol - check if TCP or UDP
+def extract_connection_info(pkt):
+    """Return (protocol, sport, dport) or (None, None, None) if unsupported."""
     if pkt.haslayer(TCP):
-        protocol = "TCP"
-        sport = pkt[TCP].sport
-        dport = pkt[TCP].dport
+        return "TCP", pkt[TCP].sport, pkt[TCP].dport
     elif pkt.haslayer(UDP):
-        protocol = "UDP"
-        sport = pkt[UDP].sport
-        dport = pkt[UDP].dport
+        return "UDP", pkt[UDP].sport, pkt[UDP].dport
+    elif pkt.haslayer(ICMP):
+        return "ICMP", "-", "-"
     else:
-        return None  # only track TCP/UDP for now
+        return None, None, None
+        
+def get_flow_id(pkt):
+    protocol, sport, dport = extract_connection_info(pkt)
 
-    # return a tuple that uniquely identifies a flow - so future packets can be identified as part of an established flow (connection) or part of a new flow 
-    return (
-        pkt.src, pkt.dst,
-        sport, dport,
-        protocol
-    )
+    # Only track TCP/UDP flows
+    if protocol not in ("TCP", "UDP"):
+        return None
+
+    return (pkt.src, pkt.dst, sport, dport, protocol)
+
 
 # method that tracks connections by storing flows in a table (set)
 def track_connection(pkt):
@@ -85,29 +82,15 @@ def is_established(pkt):
 
 
 def parse_packet(pkt):
-    # Extract readable metadata from the packet.
     scapy_pkt = IP(pkt.get_payload())
+    protocol, sport, dport = extract_connection_info(scapy_pkt)
 
-    src = scapy_pkt.src
-    dst = scapy_pkt.dst
-
-    # Detect protocol + ports
-    if scapy_pkt.haslayer(TCP):
-        protocol = "TCP"
-        sport = scapy_pkt[TCP].sport
-        dport = scapy_pkt[TCP].dport
-    elif scapy_pkt.haslayer(UDP):
-        protocol = "UDP"
-        sport = scapy_pkt[UDP].sport
-        dport = scapy_pkt[UDP].dport
-    elif scapy_pkt.haslayer(ICMP):
-        protocol = "ICMP"
-        sport = dport = "-"
-    else:
+    if protocol is None:
         protocol = f"OTHER({scapy_pkt.proto})"
         sport = dport = "-"
 
-    return f"{protocol} {src}:{sport} -> {dst}:{dport}"
+    return f"{protocol} {scapy_pkt.src}:{sport} -> {scapy_pkt.dst}:{dport}"
+
 
 def process_packet(pkt):
      # Parse packet and log initial info
