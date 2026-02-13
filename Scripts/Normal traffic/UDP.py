@@ -3,7 +3,7 @@ from scapy.all import IP, UDP, send
 import time
 import random
 
-TARGET = "192.168.56.101"
+TARGET = "10.0.2.2"
 DEST_PORT = 5005  # any port
 
 def main():

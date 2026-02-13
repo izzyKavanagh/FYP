@@ -1,9 +1,8 @@
-test_http_https.py
 #!/usr/bin/env python3
 from scapy.all import IP, TCP, send
 import time
 
-TARGET_IP = "192.168.56.101"  # ← firewall target
+TARGET_IP = "10.0.2.2"  # ← firewall target
 PORTS = [80, 443]  # HTTP, HTTPS
 
 def main():

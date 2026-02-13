@@ -1,7 +1,7 @@
 from scapy.all import IP, TCP, send
 import time
 
-TARGET = "192.168.56.3"   
+TARGET = "10.0.2.2"   
 DEST_PORT = 80              
 
 def main():
