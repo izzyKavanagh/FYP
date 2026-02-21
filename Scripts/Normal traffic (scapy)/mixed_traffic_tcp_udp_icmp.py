@@ -3,7 +3,7 @@ import random
 import time
 from scapy.all import IP, ICMP, TCP, UDP, send
 
-TARGET = "10.0.2.2"
+TARGET = "10.0.1.2"
 
 def send_icmp():
     send(IP(dst=TARGET)/ICMP(), verbose=False)

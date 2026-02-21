@@ -2,8 +2,8 @@
 from scapy.all import IP, TCP, send
 import time
 
-TARGET_IP = "10.0.2.2"  # ← firewall target
-PORTS = [80, 443]  # HTTP, HTTPS
+TARGET_IP = "10.0.1.2" 
+PORTS = [80, 443] 
 
 def main():
     print(f"[+] Sending HTTP/HTTPS TCP SYN packets to {TARGET_IP}")

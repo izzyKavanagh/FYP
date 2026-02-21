@@ -1,7 +1,7 @@
 from scapy.all import ICMP, IP, send
 import time
 
-TARGET = "10.0.2.2"  # change to victim/firewall IP
+TARGET = "10.0.1.2"  # change to victim/firewall IP
 
 def main():
     print(f"[+] Sending ICMP echo requests to {TARGET}")
