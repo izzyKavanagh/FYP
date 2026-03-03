@@ -2,7 +2,8 @@ import numpy as np
 
 def extract_features(flow):
 
-    duration = flow["last_seen"] - flow["start_time"]
+    duration = flow["last_seen"] - flow["start_time"]  # in seconds
+    duration *= 1e6  # convert to microseconds
 
     packet_lengths = flow["packet_lengths"]
 
@@ -13,8 +14,10 @@ def extract_features(flow):
         mean_len = 0
         std_len = 0
 
+    dest_port = flow.get("dest_port") or 0
+
     features = [
-        flow["dest_port"],                     # Destination Port
+        dest_port,                             # Destination Port
         duration,                              # Flow Duration
         flow["fwd_packets"],                   # Total Fwd Packets
         flow["bwd_packets"],                   # Total Backward Packets
