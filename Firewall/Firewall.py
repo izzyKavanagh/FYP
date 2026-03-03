@@ -2,23 +2,19 @@ import logging
 from datetime import datetime
 from scapy.all import IP, TCP, UDP, ICMP
 from netfilterqueue import NetfilterQueue
+from feature_extractor import extract_features
+from flow_manager import FlowManager
+from ml_model import MLModel
+import subprocess
 
-
-# Create loggers
-logging.basicConfig(level=logging.INFO)
-
-allow_logger = logging.getLogger("allowed")
-deny_logger = logging.getLogger("denied")
-
-# Handlers write to local log files
-allow_handler = logging.FileHandler("allowed.log")
-deny_handler = logging.FileHandler("denied.log")
-
-allow_logger.addHandler(allow_handler)
-deny_logger.addHandler(deny_handler)
-
+flow_manager = FlowManager()
+ml_model = MLModel("rf_model.pkl")
+dest_port = 80
 # Create table to track established connections - allows stateful connection tracking
 connection_table = set()
+
+# Create blacklist for ML-blocked IPs
+blacklist = set()
 
 # ----------------------- HELPER METHODS -----------------------
 
@@ -62,6 +58,7 @@ def track_connection(pkt):
 
     # ingress direction
     connection_table.add((dst, src, dport, sport, protocol, "INBOUND"))
+    
 
 # helper method to check if a packet is part of an established connection - i.e. in the connection table
 def is_established(pkt):
@@ -103,23 +100,48 @@ def log_event(action, rule, direction, info):
 
 # ----------------------- FIREWALL LOGIC -----------------------
 
-def parse_packet(pkt):
-    scapy_pkt = IP(pkt.get_payload())
-    protocol, sport, dport = extract_connection_info(scapy_pkt)
-
-    if protocol is None:
-        protocol = f"OTHER({scapy_pkt.proto})"
-        sport = dport = "-"
-
-    return f"{protocol} {scapy_pkt.src}:{sport} -> {scapy_pkt.dst}:{dport}"
-
+def block_ip(ip):
+    subprocess.run([
+        "sudo",
+        "iptables",
+        "-A",
+        "INPUT",
+        "-s",
+        ip,
+        "-j",
+        "DROP"
+    ])
 
 def process_packet(pkt):
     # Parse packet and log initial info
     scapy_pkt = IP(pkt.get_payload())
-    info = parse_packet(pkt)
+    info = extract_print_info(scapy_pkt)
 
-    # Allow Rules -----------------------------
+    # check if source IP is in ML blacklist - if so, block and log
+    if scapy_pkt.src in blacklist:
+        info = extract_print_info(scapy_pkt)
+        log_event("BLOCK", "ML blacklist", "inbound", info)
+        pkt.drop()
+        return
+
+    # ----------- ML FLOW TRACKING -----------
+    flow_manager.update_flow(scapy_pkt)
+
+    expired_flows = flow_manager.expire_flows()
+    
+
+    for flow in expired_flows:
+        # extract features from flow and run ML prediction - if malicious, block source IP and log
+        features = extract_features(flow)
+        # ML model expects a 2D array of shape for a single prediction - create a 2D array with one row
+        prediction = ml_model.predict([features])[0]
+        
+        if prediction == 1:
+            print(f"[!] ML detected malicious flow from {flow['src_ip']}")
+            blacklist.add(flow["src_ip"])
+            block_ip(flow["src_ip"])
+
+    # ----------- Allow Rules -----------
     
     # allow established connections
     if is_established(scapy_pkt):
@@ -129,14 +151,14 @@ def process_packet(pkt):
     
     # Allow all ICMP traffic
     if scapy_pkt.haslayer(ICMP):
-        # ICMP traffic is not tracked as it is stateless
-        log_event("ALLOW", "ICMP allowed", "outbound", info)
+        direction = "inbound" if scapy_pkt.dst == scapy_pkt[IP].dst else "outbound"
+        log_event("ALLOW", "ICMP allowed", direction, info)
         pkt.accept()
         return
 
     # Allow HTTP and HTTPS traffic
     if scapy_pkt.haslayer(TCP) and scapy_pkt[TCP].dport in (80, 443):
-        log_event("ALLOW", "ICMP allowed", "outbound", info)
+        log_event("ALLOW", "HTTP/HTTPS allowed", "outbound", info)
         track_connection(scapy_pkt)
         pkt.accept()
         return
