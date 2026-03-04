@@ -113,9 +113,12 @@ def block_ip(ip):
     ])
 
 def process_packet(pkt):
-    # Parse packet and log initial info
-    scapy_pkt = IP(pkt.get_payload())
-    info = extract_print_info(scapy_pkt)
+    try:
+        scapy_pkt = IP(pkt.get_payload())
+        info = extract_print_info(scapy_pkt)
+    except Exception:
+        pkt.accept()
+        return
 
     # check if source IP is in ML blacklist - if so, block and log
     if scapy_pkt.src in blacklist:
