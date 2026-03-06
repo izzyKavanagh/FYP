@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime
 from scapy.all import IP, TCP, UDP, ICMP
 from netfilterqueue import NetfilterQueue
@@ -114,69 +113,87 @@ def block_ip(ip):
 
 def process_packet(pkt):
     try:
-        scapy_pkt = IP(pkt.get_payload())
+        payload = pkt.get_payload()
+
+        if len(payload) < 20:
+            pkt.accept()
+            return
+
+        try:
+            scapy_pkt = IP(payload)
+        except Exception:
+            pkt.accept()
+            return
+
         info = extract_print_info(scapy_pkt)
-    except Exception:
-        pkt.accept()
-        return
 
-    # check if source IP is in ML blacklist - if so, block and log
-    if scapy_pkt.src in blacklist:
-        info = extract_print_info(scapy_pkt)
-        log_event("BLOCK", "ML blacklist", "inbound", info)
-        pkt.drop()
-        return
+        # check if source IP is in ML blacklist - if so, block and log
+        if scapy_pkt.src in blacklist:
+            info = extract_print_info(scapy_pkt)
+            log_event("BLOCK", "ML blacklist", "inbound", info)
+            pkt.drop()
+            return
 
-    # ----------- ML FLOW TRACKING -----------
-    flow_manager.update_flow(scapy_pkt)
+        # ----------- ML FLOW TRACKING -----------
+        flow_manager.update_flow(scapy_pkt)
 
-    expired_flows = flow_manager.expire_flows()
-    
-
-    for flow in expired_flows:
-        # extract features from flow and run ML prediction - if malicious, block source IP and log
-        features = extract_features(flow)
-        # ML model expects a 2D array of shape for a single prediction - create a 2D array with one row
-        prediction = ml_model.predict([features])[0]
+        expired_flows = flow_manager.expire_flows()
         
-        if prediction == 1:
-            print(f"[!] ML detected malicious flow from {flow['src_ip']}")
-            blacklist.add(flow["src_ip"])
-            block_ip(flow["src_ip"])
 
-    # ----------- Allow Rules -----------
+        for flow in expired_flows:
+            # extract features from flow and run ML prediction - if malicious, block source IP and log
+            try:
+                features = extract_features(flow)
+                prediction = ml_model.predict([features])[0]
+            except Exception as e:
+                print(f"[ML ERROR] {e}")
+                continue
+            
+            src_ip = flow.get("src_ip", "unknown")
+            if prediction == 1:
+                print(f"[ML PREDICTION] {src_ip} → MALICIOUS")
+                blacklist.add(src_ip)
+                block_ip(src_ip)
+            else:
+                print(f"[ML PREDICTION] {src_ip} → BENIGN")
     
-    # allow established connections
-    if is_established(scapy_pkt):
-        log_event("ALLOW", "connection tracking", "inbound", info)
-        pkt.accept()
-        return
-    
-    # Allow all ICMP traffic
-    if scapy_pkt.haslayer(ICMP):
-        direction = "inbound" if scapy_pkt.dst == scapy_pkt[IP].dst else "outbound"
-        log_event("ALLOW", "ICMP allowed", direction, info)
-        pkt.accept()
-        return
 
-    # Allow HTTP and HTTPS traffic
-    if scapy_pkt.haslayer(TCP) and scapy_pkt[TCP].dport in (80, 443):
-        log_event("ALLOW", "HTTP/HTTPS allowed", "outbound", info)
-        track_connection(scapy_pkt)
-        pkt.accept()
-        return
-    
-    # Allow DNS queries
-    if scapy_pkt.haslayer(UDP) and scapy_pkt[UDP].dport == 53:
-        log_event("ALLOW", "DNS query", "outbound", info)
-        track_connection(scapy_pkt)
-        pkt.accept()
-        return
-    
-    # Deny all other traffic & log
-    log_event("BLOCK", "default deny", "outbound", info)
-    pkt.drop()
+        # ----------- Allow Rules -----------
+        
+        # allow established connections
+        if is_established(scapy_pkt):
+            log_event("ALLOW", "connection tracking", "inbound", info)
+            pkt.accept()
+            return
+        
+        # Allow all ICMP traffic
+        if scapy_pkt.haslayer(ICMP):
+            direction = "inbound" if scapy_pkt.src != scapy_pkt[IP].src else "outbound"
+            log_event("ALLOW", "ICMP allowed", direction, info)
+            pkt.accept()
+            return
 
+        # Allow HTTP and HTTPS traffic
+        if scapy_pkt.haslayer(TCP) and scapy_pkt[TCP].dport in (80, 443):
+            log_event("ALLOW", "HTTP/HTTPS allowed", "outbound", info)
+            track_connection(scapy_pkt)
+            pkt.accept()
+            return
+        
+        # Allow DNS queries
+        if scapy_pkt.haslayer(UDP) and scapy_pkt[UDP].dport == 53:
+            log_event("ALLOW", "DNS query", "outbound", info)
+            track_connection(scapy_pkt)
+            pkt.accept()
+            return
+        
+        # Deny all other traffic & log
+        log_event("BLOCK", "default deny", "outbound", info)
+        pkt.drop()
+        
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        pkt.accept()
 
 def main():
     print("[+] Firewall started\n")
