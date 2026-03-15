@@ -19,13 +19,18 @@ env/
 .ipynb_checkpoints/
 
 # =========================
-# Data files (VERY IMPORTANT for you)
+# Data files 
 # =========================
 *.csv
 *.xlsx
 *.xls
 *.parquet
 *.json
+
+# =========================
+# Rough Work Python Files 
+# =========================
+ml_code.py
 
 # =========================
 # Models
