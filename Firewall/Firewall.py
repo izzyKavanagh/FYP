@@ -5,6 +5,7 @@ from feature_extractor import extract_features
 from flow_manager import FlowManager
 from ml_model import MLModel
 import subprocess
+from config_loader import load_config
 
 flow_manager = FlowManager()
 ml_model = MLModel("rf_model.pkl")
@@ -172,35 +173,51 @@ def process_packet(pkt):
             return
         
         # Allow all ICMP traffic
-        if scapy_pkt.haslayer(ICMP):
-            direction = "inbound" if scapy_pkt.src != scapy_pkt[IP].src else "outbound"
-            log_event("ALLOW", "ICMP allowed", direction, info)
+        if scapy_pkt.haslayer(ICMP) and config["icmp_allowed"]:
+            log_event("ALLOW", "ICMP allowed", "outbound", info)
             pkt.accept()
             return
 
         # Allow HTTP and HTTPS traffic
-        if scapy_pkt.haslayer(TCP) and scapy_pkt[TCP].dport in (80, 443):
+        if scapy_pkt.haslayer(TCP) and scapy_pkt[TCP].dport in config["allowed_outbound_tcp_ports"]:
             log_event("ALLOW", "HTTP/HTTPS allowed", "outbound", info)
             track_connection(scapy_pkt)
             pkt.accept()
             return
         
         # Allow DNS queries
-        if scapy_pkt.haslayer(UDP) and scapy_pkt[UDP].dport == 53:
+        if scapy_pkt.haslayer(UDP) and scapy_pkt[UDP].dport in config["allowed_outbound_udp_ports"]:
             log_event("ALLOW", "DNS query", "outbound", info)
             track_connection(scapy_pkt)
             pkt.accept()
             return
         
-        # Deny all other traffic & log
-        log_event("BLOCK", "default deny", "outbound", info)
-        pkt.drop()
+        if config["default_policy"] == "allow":
+            pkt.accept()
+        else:
+            log_event("BLOCK", "default deny", "outbound", info)
+            pkt.drop()
         
     except Exception as e:
         print(f"[ERROR] {e}")
         pkt.accept()
 
 def main():
+    global config
+
+    config = load_config()
+
+    print("[+] Firewall started")
+    print("[+] Configuration loaded")
+
+    nfq = NetfilterQueue()
+    nfq.bind(0, process_packet)
+
+    try:
+        nfq.run()
+    except KeyboardInterrupt:
+        print("\n[-] Firewall stopped")
+
     print("[+] Firewall started\n")
     print("[+] Press CTRL+C to stop\n")
 
