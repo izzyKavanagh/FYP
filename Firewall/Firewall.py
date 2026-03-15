@@ -126,7 +126,7 @@ def process_packet(pkt):
             return
 
         flow_manager.expire_flows()
-        
+
         info = extract_print_info(scapy_pkt)
 
         # check if source IP is in ML blacklist - if so, block and log
@@ -141,7 +141,7 @@ def process_packet(pkt):
         flow = flow_manager.update_flow(scapy_pkt)
 
         # Only run ML when the flow has enough packets
-        if flow and flow["packet_count"] >= 10 and not flow.get("ml_checked"):
+        if flow and flow["packet_count"] >= 1 and not flow.get("ml_checked"):
 
             flow["ml_checked"] = True
 
