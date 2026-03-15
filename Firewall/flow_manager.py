@@ -31,6 +31,7 @@ class FlowManager:
         return (src, dst, sport, dport, proto)
 
     def update_flow(self, pkt):
+        
         key = self._get_flow_key(pkt)
         if key is None:
             return
@@ -44,6 +45,7 @@ class FlowManager:
                 "dest_port": key[3],
                 "start_time": now,
                 "last_seen": now,
+                "packet_count": 0,
                 "fwd_packets": 0,
                 "bwd_packets": 0,
                 "fwd_bytes": 0,
@@ -56,6 +58,7 @@ class FlowManager:
 
         flow = self.flows[key]
         flow["last_seen"] = now
+        flow["packet_count"] += 1
 
         pkt_len = len(pkt)
         flow["packet_lengths"].append(pkt_len)
@@ -77,6 +80,8 @@ class FlowManager:
                 flow["fin_count"] += 1
             if "A" in str(flags):
                 flow["ack_count"] += 1
+                
+        return flow
 
     def expire_flows(self):
         now = time.time()
