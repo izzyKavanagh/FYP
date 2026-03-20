@@ -5,10 +5,18 @@ from feature_extractor import extract_features
 from flow_manager import FlowManager
 from ml_model import MLModel
 import subprocess
+import numpy as np
 
 flow_manager = FlowManager()
 ml_model = MLModel("rf_model.pkl")
-dest_port = 80
+
+# ----------------------- CONFIG -----------------------
+
+MIN_PACKETS = 20
+MIN_DURATION = 0.5  # seconds
+ML_CHECK_INTERVAL = 10
+MALICIOUS_THRESHOLD = 0.7
+
 # Create table to track established connections - allows stateful connection tracking
 connection_table = set()
 
@@ -112,6 +120,7 @@ def block_ip(ip):
     ])
 
 def process_packet(pkt):
+    #print("[HIT] packet received")
     try:
         payload = pkt.get_payload()
 
@@ -140,60 +149,76 @@ def process_packet(pkt):
 
         flow = flow_manager.update_flow(scapy_pkt)
 
-        # Only run ML when the flow has enough packets
-        if flow and flow["packet_count"] >= 1 and not flow.get("ml_checked"):
+        if flow:
+            # debug print to show flow details and ML features/probability
+            #print("\n\n-------------------------------------------")
+            #print(f"[FLOW] {flow['src_ip']} -> {flow['dst_ip']} packets={flow['packet_count']}")
+            #print("-------------------------------------------\n\n")
 
-            flow["ml_checked"] = True
+            duration = flow["last_seen"] - flow["start_time"]
 
-            try:
-                features = extract_features(flow)
-                prediction = ml_model.predict([features])[0]
-            except Exception as e:
-                print(f"[ML ERROR] {e}")
-                prediction = 0
+            # Only run ML when the flow has enough packets
+            if (flow["packet_count"] >= MIN_PACKETS and duration >= MIN_DURATION and flow["packet_count"] % ML_CHECK_INTERVAL == 0):
 
-            if prediction == 1:
-                print("\n\n-------------------------------------------")
-                print(f"[ML PREDICTION] {flow['src_ip']} → MALICIOUS")
-                blacklist.add(flow["src_ip"])
-                block_ip(flow["src_ip"])
-                print("-------------------------------------------\n\n")
-            else:
-                print("\n\n-------------------------------------------")
-                print(f"[ML PREDICTION] {flow['src_ip']} → BENIGN")
-                print("-------------------------------------------\n\n")
+                try:
+                    features = extract_features(flow)
+                    features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+                    
+                    # use probability instead of hard prediction
+                    proba = ml_model.predict_proba([features])[0][1]
+                    #print("\n-------------------------------------------")
+                    #print("[DEBUG]")
+                    #print(f"[DEBUG] packets={flow['packet_count']} duration={duration:.2f}s proba={proba:.4f}")
+                    #print("-------------------------------------------\n")
+                    #print(f"[FLOW] {flow['src_ip']} packets={flow['packet_count']}")
+
+                except Exception as e:
+                    print(f"[ML ERROR] {e}")
+                    proba = 0.0  # default to benign if error occurs
+
+                if proba > MALICIOUS_THRESHOLD:
+                    print("\n\n*******************************************")
+                    print(f"[ML PREDICTION] {flow['src_ip']} → MALICIOUS")
+                    if flow["src_ip"] not in blacklist:
+                        blacklist.add(flow["src_ip"])
+                        block_ip(flow["src_ip"])
+                    print("*******************************************\n\n")
+                else:
+                    print("\n\n*******************************************")
+                    print(f"[ML PREDICTION] {flow['src_ip']} → BENIGN")
+                    print("*******************************************\n\n")
 
         # ----------- Allow Rules -----------
         
         # allow established connections
         if is_established(scapy_pkt):
-            log_event("ALLOW", "connection tracking", "inbound", info)
+            #log_event("ALLOW", "connection tracking", "inbound", info)
             pkt.accept()
             return
         
         # Allow all ICMP traffic
         if scapy_pkt.haslayer(ICMP):
-            direction = "inbound" if scapy_pkt.src != scapy_pkt[IP].src else "outbound"
-            log_event("ALLOW", "ICMP allowed", direction, info)
+            direction = "inbound"
+            #log_event("ALLOW", "ICMP allowed", direction, info)
             pkt.accept()
             return
 
         # Allow HTTP and HTTPS traffic
         if scapy_pkt.haslayer(TCP) and scapy_pkt[TCP].dport in (80, 443):
-            log_event("ALLOW", "HTTP/HTTPS allowed", "outbound", info)
+            #log_event("ALLOW", "HTTP/HTTPS allowed", "outbound", info)
             track_connection(scapy_pkt)
             pkt.accept()
             return
         
         # Allow DNS queries
         if scapy_pkt.haslayer(UDP) and scapy_pkt[UDP].dport == 53:
-            log_event("ALLOW", "DNS query", "outbound", info)
+            #log_event("ALLOW", "DNS query", "outbound", info)
             track_connection(scapy_pkt)
             pkt.accept()
             return
         
         # Deny all other traffic & log
-        log_event("BLOCK", "default deny", "outbound", info)
+        #log_event("BLOCK", "default deny", "outbound", info)
         pkt.drop()
         
     except Exception as e:
