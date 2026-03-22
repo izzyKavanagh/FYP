@@ -1,0 +1,17 @@
+firewall:
+
+  icmp_allowed: true
+
+  allowed_outbound_tcp_ports:
+    - 80
+    - 443
+
+  allowed_outbound_udp_ports:
+    - 53
+
+  allowed_inbound_tcp_ports:
+    - 22
+
+  allowed_inbound_udp_ports: []
+
+  default_policy: deny

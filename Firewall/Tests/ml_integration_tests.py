@@ -22,4 +22,7 @@ flow = {
 
 features = extract_features(flow)
 prediction = ml_model.predict([features])[0]
-print("Prediction:", "Malicious" if prediction==1 else "Benign")
+
+# Assert expected outcome
+assert prediction in (0, 1), "Prediction must be 0 (Benign) or 1 (Malicious)"
+print("Integration test passed: Prediction =", "Malicious" if prediction==1 else "Benign")
