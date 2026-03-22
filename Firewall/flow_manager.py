@@ -2,9 +2,8 @@
 
 import time
 from scapy.layers.inet import IP, TCP, UDP
-import numpy as np
 
-FLOW_TIMEOUT = 10  # seconds
+FLOW_TIMEOUT = 30  # seconds
 
 class FlowManager:
     def __init__(self):
@@ -28,7 +27,19 @@ class FlowManager:
             sport = pkt[UDP].sport
             dport = pkt[UDP].dport
 
-        return (src, dst, sport, dport, proto)
+        # Normalize flow (make it bidirectional) !! fixes issue with flow not accumulating 
+        # flow was unidirectional - packets never accumulated 
+        # ml model was trained on bidirectional flows - so this is necessary for accurate predictions
+        #if (src, sport) <= (dst, dport):
+        #    return (src, dst, sport, dport, proto)
+        #else:
+        #    return (dst, src, dport, sport, proto)
+
+        # make definition of flow more flexible - only consider IPs and protocol for flow key, ignore ports
+        # ensures flows will accumulate even if ports change (e.g. due to NAT or ephemeral ports) - more robust flow tracking
+        ip_pair = tuple(sorted([src, dst]))
+
+        return (ip_pair[0], ip_pair[1], proto)
 
     def update_flow(self, pkt):
         
@@ -42,7 +53,7 @@ class FlowManager:
             self.flows[key] = {
                 "src_ip": key[0],
                 "dst_ip": key[1],
-                "dest_port": key[3],
+                "dest_port": pkt[TCP].dport if TCP in pkt else pkt[UDP].dport if UDP in pkt else 0,
                 "start_time": now,
                 "last_seen": now,
                 "packet_count": 0,
@@ -64,7 +75,7 @@ class FlowManager:
         flow["packet_lengths"].append(pkt_len)
 
         # Forward direction = original src
-        if pkt[IP].src == key[0]:
+        if pkt[IP].src == flow["src_ip"]:
             flow["fwd_packets"] += 1
             flow["fwd_bytes"] += pkt_len
         else:
