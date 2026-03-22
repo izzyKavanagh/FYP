@@ -1,5 +1,7 @@
 # ml_model.py
 
+from pyexpat import features
+
 import joblib
 import os
 
@@ -30,3 +32,6 @@ class MLModel:
             list: Predictions, 0 = benign, 1 = malicious.
         """
         return self.model.predict(features)
+    
+    def predict_proba(self, features):
+        return self.model.predict_proba(features)
