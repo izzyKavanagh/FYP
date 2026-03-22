@@ -13,10 +13,11 @@ def main():
     process = subprocess.Popen([
         "sudo", "hping3",
         "-S",
-        "--flood",
+        "-i", 
+        "u1000",
         "-p", str(PORT),
+        "-s", "12345",  # fixed source port for consistency
         TARGET,
-        "--rand-source"
     ])
 
     try:
