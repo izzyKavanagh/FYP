@@ -2,20 +2,34 @@ import numpy as np
 
 def extract_features(flow):
 
+    # ------------------ DURATION ------------------
     duration = flow["last_seen"] - flow["start_time"]  # in seconds
+
+    # Prevent zero/near-zero duration
+    if duration <= 0:
+        duration = 1e-6 # 1 microsecond
+
     duration *= 1e6  # convert to microseconds
 
+    # ------------------ PACKET LENGTH STATS ------------------
     packet_lengths = flow["packet_lengths"]
 
-    if len(packet_lengths) > 0:
+    if len(packet_lengths) > 1:
         mean_len = np.mean(packet_lengths)
         std_len = np.std(packet_lengths)
+    elif len(packet_lengths) == 1:
+        mean_len = packet_lengths[0]
+        std_len = 0.0
     else:
         mean_len = 0
         std_len = 0
+        
+    # ------------------ SAFE PORT ------------------
+    dest_port = flow.get("dest_port")
+    if dest_port is None:
+        dest_port = 0
 
-    dest_port = flow.get("dest_port") or 0
-
+    # ------------------ FEATURE VECTOR ------------------
     features = [
         dest_port,                             # Destination Port
         duration,                              # Flow Duration
@@ -30,4 +44,11 @@ def extract_features(flow):
         flow["ack_count"]                      # ACK Flag Count
     ]
 
-    return features
+    # ------------------ SANITIZE ------------------
+    features = np.array(features, dtype=float)
+
+    # Replace NaN / inf (match training cleanup)
+    features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+    return features.tolist()
