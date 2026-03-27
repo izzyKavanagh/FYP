@@ -37,9 +37,14 @@ class FlowManager:
 
         # make definition of flow more flexible - only consider IPs and protocol for flow key, ignore ports
         # ensures flows will accumulate even if ports change (e.g. due to NAT or ephemeral ports) - more robust flow tracking
-        ip_pair = tuple(sorted([src, dst]))
+        #ip_pair = tuple(sorted([src, dst]))
+        #return (ip_pair[0], ip_pair[1], proto)
 
-        return (ip_pair[0], ip_pair[1], proto)
+        # fix prediction accuracy issue - model was trained on flows defined by src/dst IPs and ports, so we need to include ports in flow key for consistency with training data
+        if (src, sport) <= (dst, dport):
+            return (src, dst, sport, dport, proto)
+        else:
+            return (dst, src, dport, sport, proto)
 
     def update_flow(self, pkt):
         
@@ -75,7 +80,7 @@ class FlowManager:
         flow["packet_lengths"].append(pkt_len)
 
         # Forward direction = original src
-        if pkt[IP].src == flow["src_ip"]:
+        if pkt[IP].src == key[0]:
             flow["fwd_packets"] += 1
             flow["fwd_bytes"] += pkt_len
         else:
@@ -85,11 +90,11 @@ class FlowManager:
         if TCP in pkt:
             flags = pkt[TCP].flags
 
-            if "S" in str(flags):
+            if pkt[TCP].flags & 0x02:  # SYN:
                 flow["syn_count"] += 1
-            if "F" in str(flags):
+            if pkt[TCP].flags & 0x01:  # FIN:
                 flow["fin_count"] += 1
-            if "A" in str(flags):
+            if pkt[TCP].flags & 0x10:  # ACK:
                 flow["ack_count"] += 1
                 
         return flow

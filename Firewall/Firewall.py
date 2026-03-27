@@ -206,6 +206,12 @@ def process_packet(pkt):
                 try:
                     features = extract_features(flow)
                     features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+
+                    print("[FEATURES]", features)
+
+                    print("FEATURE DEBUG:")
+                    for i, f in enumerate(features):
+                        print(i, f)
                     
                     # use probability instead of hard prediction
                     proba = ml_model.predict_proba([features])[0][1]
@@ -275,12 +281,7 @@ def main():
     Loads configuration, initializes Netfilter queue, and starts packet processing loop.
     """
 
-    # Load firewall configuration (JSON or YAML)
-    global config
-    config = load_config()
-
     print("[+] Firewall started\n")
-    print("[+] Configuration loaded\n")
     print("[+] Press CTRL+C to stop\n")
 
     # Bind to Netfilter queue 0 (packets need to be redirected using iptables NFQUEUE rules)
