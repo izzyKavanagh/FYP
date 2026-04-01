@@ -49,10 +49,10 @@ def syn_burst():
     process = subprocess.Popen([
         "sudo", "hping3",
         "-S",
-        "--flood",
+        "-c", "20",
+        "-i", "u10000",
         "-p", "80",
         TARGET,
-        "--rand-source"
     ], stdout=subprocess.DEVNULL)
 
     time.sleep(5)
