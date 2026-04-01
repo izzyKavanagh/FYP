@@ -25,30 +25,28 @@ def extract_features(flow):
         std_len = 0
         
     # ------------------ SAFE PORT ------------------
-    dest_port = flow.get("dest_port")
+    dest_port = flow["dest_port"]
+
     if dest_port is None:
         dest_port = 0
 
     # ------------------ FEATURE VECTOR ------------------
-    features = [
-        dest_port,                             # Destination Port
-        duration,                              # Flow Duration
-        flow["fwd_packets"],                   # Total Fwd Packets
-        flow["bwd_packets"],                   # Total Backward Packets
-        flow["fwd_bytes"],                     # Total Length of Fwd Packets
-        flow["bwd_bytes"],                     # Total Length of Bwd Packets
-        mean_len,                              # Packet Length Mean
-        std_len,                               # Packet Length Std
-        flow["syn_count"],                     # SYN Flag Count
-        flow["fin_count"],                     # FIN Flag Count
-        flow["ack_count"]                      # ACK Flag Count
-    ]
+
+    # return features as dict to ensure firewall maps features correctly by name
+    # firewall handles missing features
+
+    return {
+        "Destination Port": dest_port,
+        "Flow Duration": duration,
+        "Total Fwd Packets": flow["fwd_packets"],
+        "Total Backward Packets": flow["bwd_packets"],
+        "Total Length of Fwd Packets": flow["fwd_bytes"],
+        "Total Length of Bwd Packets": flow["bwd_bytes"],
+        "Packet Length Mean": mean_len,
+        "Packet Length Std": std_len,
+        "SYN Flag Count": flow["syn_count"],
+        "FIN Flag Count": flow["fin_count"],
+        "ACK Flag Count": flow["ack_count"]
+    }
 
     # ------------------ SANITIZE ------------------
-    features = np.array(features, dtype=float)
-
-    # Replace NaN / inf (match training cleanup)
-    features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
-
-
-    return features.tolist()

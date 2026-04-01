@@ -105,3 +105,21 @@ plt.title("Class Distribution")
 plt.show()
 
 print("ROC AUC:", roc_auc_score(y_test, rf.predict_proba(X_test)[:,1]))
+
+df['Label'].value_counts(normalize=True)
+
+print(confusion_matrix(y_test, y_pred))
+
+y_probs = rf.predict_proba(X_test)[:,1]
+print(min(y_probs), max(y_probs))
+print(y_probs[:20])
+
+from sklearn.tree import DecisionTreeClassifier
+
+model = DecisionTreeClassifier(max_depth=5)
+model.fit(X_train, y_train)
+print(model.score(X_test, y_test))
+
+print(X_train.shape, y_train.shape)
+print(y_train[:10])
+print(df['Label'][:10])
