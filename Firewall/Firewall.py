@@ -1,4 +1,5 @@
 from datetime import datetime
+import joblib
 from scapy.all import IP, TCP, UDP, ICMP
 from netfilterqueue import NetfilterQueue
 from feature_extractor import extract_features
@@ -11,6 +12,8 @@ flow_manager = FlowManager()
 
 # Load the pre-trained machine learning model (random forest)
 ml_model = MLModel("rf_model.pkl")
+
+feature_names = joblib.load("features.pkl")
 
 # ----------------------- CONFIG -----------------------
 
@@ -175,6 +178,9 @@ def process_packet(pkt):
         # Remove expired flows to save memory
         flow_manager.expire_flows()
 
+        # Update flow information and get current flow state
+        flow = flow_manager.update_flow(scapy_pkt)
+
         # Extract info for logging
         info = extract_print_info(scapy_pkt)
 
@@ -190,8 +196,6 @@ def process_packet(pkt):
 
         # ----------- ML FLOW TRACKING -----------
 
-        flow = flow_manager.update_flow(scapy_pkt)
-
         if flow:
             # debug print to show flow details and ML features/probability
             #print("\n\n-------------------------------------------")
@@ -204,15 +208,25 @@ def process_packet(pkt):
             if (flow["packet_count"] >= MIN_PACKETS and duration >= MIN_DURATION and flow["packet_count"] % ML_CHECK_INTERVAL == 0):
 
                 try:
-                    features = extract_features(flow)
+                    
+                    feature_dict = extract_features(flow)
+
+                    features = [feature_dict[name] for name in feature_names]
                     features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
 
-                    print("[FEATURES]", features)
+                    #print("[FEATURES]", features)
 
                     print("FEATURE DEBUG:")
                     for i, f in enumerate(features):
                         print(i, f)
+
+                    print(f"PKT: {scapy_pkt[IP].src} -> {scapy_pkt[IP].dst}")
                     
+                    #print("\n===== FEATURE NAMES DEBUG =====")
+                    #print("Expected order:", feature_names)
+                    #print("Extracted features:", feature_dict)
+                    #print("=========================\n")
+                                    
                     # use probability instead of hard prediction
                     proba = ml_model.predict_proba([features])[0][1]
                     #print("\n-------------------------------------------")
@@ -227,17 +241,22 @@ def process_packet(pkt):
 
                 if proba > MALICIOUS_THRESHOLD:
                     print("\n\n*******************************************")
-                    print(f"[ML PREDICTION] {flow['src_ip']} → MALICIOUS")
+                    print(f"[ML PREDICTION] {flow['src_ip']} → MALICIOUS (prob={proba:.4f})")
                     if flow["src_ip"] not in blacklist:
                         blacklist.add(flow["src_ip"])
                         block_ip(flow["src_ip"])
                     print("*******************************************\n\n")
                 else:
                     print("\n\n*******************************************")
-                    print(f"[ML PREDICTION] {flow['src_ip']} → BENIGN")
+                    print(f"[ML PREDICTION] {flow['src_ip']} → BENIGN (prob={proba:.4f})")
                     print("*******************************************\n\n")
 
         # ----------- Allow Rules -----------
+        
+        # Allow established TCP (ACK packets)
+        if scapy_pkt.haslayer(TCP) and scapy_pkt[TCP].flags & 0x10:
+            pkt.accept()
+            return
         
         # 1. Allow established connections (stateful tracking)
         if is_established(scapy_pkt):

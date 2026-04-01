@@ -26,6 +26,8 @@ class FlowManager:
         elif UDP in pkt:
             sport = pkt[UDP].sport
             dport = pkt[UDP].dport
+        else:
+            return None
 
         # Normalize flow (make it bidirectional) !! fixes issue with flow not accumulating 
         # flow was unidirectional - packets never accumulated 
@@ -37,14 +39,18 @@ class FlowManager:
 
         # make definition of flow more flexible - only consider IPs and protocol for flow key, ignore ports
         # ensures flows will accumulate even if ports change (e.g. due to NAT or ephemeral ports) - more robust flow tracking
-        #ip_pair = tuple(sorted([src, dst]))
-        #return (ip_pair[0], ip_pair[1], proto)
+        ip_pair = tuple(sorted([src, dst]))
+        return (ip_pair[0], ip_pair[1], proto)
 
         # fix prediction accuracy issue - model was trained on flows defined by src/dst IPs and ports, so we need to include ports in flow key for consistency with training data
-        if (src, sport) <= (dst, dport):
-            return (src, dst, sport, dport, proto)
-        else:
-            return (dst, src, dport, sport, proto)
+        #if (src, sport) <= (dst, dport):
+        #    return (src, dst, sport, dport, proto)
+        #else:
+        #    return (dst, src, dport, sport, proto)
+
+        # try to find good balance between correct flow accumulation and model accuracy 
+        #return (src, dst, proto)
+
 
     def update_flow(self, pkt):
         
@@ -54,11 +60,20 @@ class FlowManager:
 
         now = time.time()
 
+        # ------------------ SAFE DEST PORT ------------------
+        if TCP in pkt:
+            dest_port = pkt[TCP].dport
+        elif UDP in pkt:
+            dest_port = pkt[UDP].dport
+        else:
+            dest_port = 0
+
+
         if key not in self.flows:
             self.flows[key] = {
-                "src_ip": key[0],
-                "dst_ip": key[1],
-                "dest_port": pkt[TCP].dport if TCP in pkt else pkt[UDP].dport if UDP in pkt else 0,
+                "src_ip": pkt[IP].src,
+                "dst_ip": pkt[IP].dst,
+                "dest_port":dest_port,
                 "start_time": now,
                 "last_seen": now,
                 "packet_count": 0,
@@ -79,8 +94,10 @@ class FlowManager:
         pkt_len = len(pkt)
         flow["packet_lengths"].append(pkt_len)
 
+        # ------------------ UPDATE FLOW ------------------
+
         # Forward direction = original src
-        if pkt[IP].src == key[0]:
+        if pkt[IP].src == flow["src_ip"]:
             flow["fwd_packets"] += 1
             flow["fwd_bytes"] += pkt_len
         else:
@@ -94,7 +111,7 @@ class FlowManager:
                 flow["syn_count"] += 1
             if pkt[TCP].flags & 0x01:  # FIN:
                 flow["fin_count"] += 1
-            if pkt[TCP].flags & 0x10:  # ACK:
+            if pkt[TCP].flags.A:  # ACK:
                 flow["ack_count"] += 1
                 
         return flow
@@ -105,6 +122,7 @@ class FlowManager:
 
         for key in list(self.flows.keys()):
             flow = self.flows[key]
+            
             if now - flow["last_seen"] > FLOW_TIMEOUT:
                 expired.append(flow)
                 del self.flows[key]
