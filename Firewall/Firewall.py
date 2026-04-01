@@ -158,27 +158,54 @@ def block_ip(ip):
     ])
 
 def process_packet(pkt):
+    """
+    Main packet processing function.
+
+    This function is responsible for:
+    - Extracting packet data from NetfilterQueue
+    - Parsing it using Scapy
+    - Updating flow tracking
+    - Running ML-based intrusion detection
+    - Applying firewall rules (allow/block)
+
+    IMPORTANT:
+    This runs in real-time for every packet, so performance matters.
+    """
+
     #print("[HIT] packet received")
     try:
+        # ------------------ RAW PAYLOAD EXTRACTION ------------------
+        # NetfilterQueue provides raw packet bytes via get_payload()
         # Get raw payload
         payload = pkt.get_payload()
 
-        # Ignore very short packets
+        # Ignore packets that are too small to be valid IP packets
+        # (minimum IPv4 header size is 20 bytes)
         if len(payload) < 20:
-            pkt.accept()
+            pkt.accept() # Allow packet (fail-open strategy)
             return
 
+        # ------------------ SCAPY PARSING ------------------
+        # Convert raw bytes into a Scapy IP packet for easier inspection
         # Parse packet with scapy
         try:
             scapy_pkt = IP(payload)
         except Exception:
-            pkt.accept()
+            pkt.accept() # If parsing fails - allow packet (avoid breaking traffic)
             return
+
+        # ------------------ FLOW CLEANUP ------------------
+        # Periodically remove expired flows to:
+        # - Prevent memory leaks
+        # - Keep flow table efficient
 
         # Remove expired flows to save memory
         flow_manager.expire_flows()
 
-        # Update flow information and get current flow state
+        # ------------------ FLOW UPDATE ------------------
+        
+        # Update flow statistics with the current packet
+        # Returns the flow object (or None if not tracked)
         flow = flow_manager.update_flow(scapy_pkt)
 
         # Extract info for logging
@@ -187,14 +214,14 @@ def process_packet(pkt):
 
         # ---------------- ML BLOCKLIST CHECK ----------------
 
-        # check if source IP is in ML blacklist - if so, block and log
+        # check if source IP is already in ML blacklist (i.e.: classified as malicious) - if so, block and log
         if scapy_pkt.src in blacklist:
             info = extract_print_info(scapy_pkt)
             log_event("BLOCK", "ML blacklist", "inbound", info)
             pkt.drop()
             return
 
-        # ----------- ML FLOW TRACKING -----------
+        # ------------------ ML FLOW ANALYSIS ----------------------
 
         if flow:
             # debug print to show flow details and ML features/probability
@@ -202,58 +229,83 @@ def process_packet(pkt):
             #print(f"[FLOW] {flow['src_ip']} -> {flow['dst_ip']} packets={flow['packet_count']}")
             #print("-------------------------------------------\n\n")
 
+            # Compute flow duration for ML feature extraction
             duration = flow["last_seen"] - flow["start_time"]
 
-            # Only run ML when the flow has enough packets
+             # Only run ML when:
+            # - Enough packets have been collected (MIN_PACKETS)
+            # - Flow has existed long enough (MIN_DURATION)
+            # - Packet count hits interval (ML_CHECK_INTERVAL)
+            #
+            # This reduces:
+            # - CPU usage
+            # - False positives from tiny flows
             if (flow["packet_count"] >= MIN_PACKETS and duration >= MIN_DURATION and flow["packet_count"] % ML_CHECK_INTERVAL == 0):
 
                 try:
-                    
+                    # ------------------ FEATURE EXTRACTION ------------------
+
+                    # Convert flow stats into ML-ready feature vector
                     feature_dict = extract_features(flow)
 
+                    # Ensure features are in correct order expected by model
                     features = [feature_dict[name] for name in feature_names]
+
+                    # Replace NaN / infinite values to avoid model crashes
                     features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
 
                     #print("[FEATURES]", features)
 
+                    # Debug: print all features with indices
                     print("FEATURE DEBUG:")
                     for i, f in enumerate(features):
                         print(i, f)
 
+                    # Debug
                     print(f"PKT: {scapy_pkt[IP].src} -> {scapy_pkt[IP].dst}")
                     
                     #print("\n===== FEATURE NAMES DEBUG =====")
                     #print("Expected order:", feature_names)
                     #print("Extracted features:", feature_dict)
                     #print("=========================\n")
-                                    
-                    # use probability instead of hard prediction
-                    proba = ml_model.predict_proba([features])[0][1]
+
                     #print("\n-------------------------------------------")
                     #print("[DEBUG]")
                     #print(f"[DEBUG] packets={flow['packet_count']} duration={duration:.2f}s proba={proba:.4f}")
                     #print("-------------------------------------------\n")
                     #print(f"[FLOW] {flow['src_ip']} packets={flow['packet_count']}")
+                                    
+                    # ------------------ ML PREDICTION ------------------
+                    # Get probability of malicious class (index 1)
+                    # use probability instead of hard prediction
+                    proba = ml_model.predict_proba([features])[0][1]
+
 
                 except Exception as e:
+                    # If ML fails - default to benign (fail-safe)
                     print(f"[ML ERROR] {e}")
                     proba = 0.0  # default to benign if error occurs
 
+                # ------------------ DECISION ------------------
                 if proba > MALICIOUS_THRESHOLD:
+                    # High probability of malicious behaviour - block and log
                     print("\n\n*******************************************")
                     print(f"[ML PREDICTION] {flow['src_ip']} → MALICIOUS (prob={proba:.4f})")
+                    # Add to blacklist if not already present
                     if flow["src_ip"] not in blacklist:
-                        blacklist.add(flow["src_ip"])
-                        block_ip(flow["src_ip"])
+                        blacklist.add(flow["src_ip"]) # ML-level blocking (added to in-memory blacklist set)
+                        block_ip(flow["src_ip"]) # System-level blocking (iptables)
                     print("*******************************************\n\n")
                 else:
+                    # Lower probability of malicious behaviour - just print prediction for monitoring purposes
                     print("\n\n*******************************************")
                     print(f"[ML PREDICTION] {flow['src_ip']} → BENIGN (prob={proba:.4f})")
                     print("*******************************************\n\n")
 
         # ----------- Allow Rules -----------
         
-        # Allow established TCP (ACK packets)
+        # ACK flag (0x10) indicates part of an existing connection
+        # Allow established TCP (ACK packets) - helps performance by not running ML on every packet of an established connection
         if scapy_pkt.haslayer(TCP) and scapy_pkt[TCP].flags & 0x10:
             pkt.accept()
             return
@@ -285,13 +337,19 @@ def process_packet(pkt):
             pkt.accept()
             return
         
+        # ------------------ DEFAULT POLICY: DENY ------------------
         # Deny all other traffic & log
+        # Any packet that does not match allow rules is dropped
+        # This is a "default deny" firewall strategy
         #log_event("BLOCK", "default deny", "outbound", info)
         pkt.drop()
         
+    # ------------------ GLOBAL ERROR HANDLER ------------------
     # Catch-all for unexpected errors to avoid dropping packets accidentally
     except Exception as e:
+        # Catch unexpected errors to prevent breaking networking
         print(f"[ERROR] {e}")
+        # Fail-open strategy: allow packet instead of risking blocking legitimate traffic
         pkt.accept()
 
 def main():
