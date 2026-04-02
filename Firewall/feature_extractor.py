@@ -1,4 +1,5 @@
 import numpy as np
+from scapy.layers.inet import IP
 
 def extract_features(flow):
     """
@@ -101,5 +102,44 @@ def extract_features(flow):
         # ACK:
         # - Indicates established communication
         # - Useful for distinguishing normal vs abnormal traffic
+        "ACK Flag Count": flow["ack_count"]
+    }
+
+def extract_window_features(flow):
+    packets = flow["window_packets"][-flow["window_size"]:]
+
+    fwd_packets = 0
+    bwd_packets = 0
+    fwd_bytes = 0
+    bwd_bytes = 0
+    packet_lengths = []
+
+    initiator = flow["initiator"]
+
+    for pkt in packets:
+        pkt_len = len(pkt)
+        packet_lengths.append(pkt_len)
+
+        if pkt[IP].src == initiator:
+            fwd_packets += 1
+            fwd_bytes += pkt_len
+        else:
+            bwd_packets += 1
+            bwd_bytes += pkt_len
+
+    mean_len = np.mean(packet_lengths)
+    std_len = np.std(packet_lengths)
+
+    return {
+        "Destination Port": flow["dest_port"],
+        "Flow Duration": (flow["last_seen"] - flow["start_time"]) * 1e6,
+        "Total Fwd Packets": fwd_packets,
+        "Total Backward Packets": bwd_packets,
+        "Total Length of Fwd Packets": fwd_bytes,
+        "Total Length of Bwd Packets": bwd_bytes,
+        "Packet Length Mean": mean_len,
+        "Packet Length Std": std_len,
+        "SYN Flag Count": flow["syn_count"],
+        "FIN Flag Count": flow["fin_count"],
         "ACK Flag Count": flow["ack_count"]
     }

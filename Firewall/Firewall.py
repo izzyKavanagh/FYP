@@ -2,7 +2,7 @@ from datetime import datetime
 import joblib
 from scapy.all import IP, TCP, UDP, ICMP
 from netfilterqueue import NetfilterQueue
-from feature_extractor import extract_features
+from feature_extractor import extract_window_features
 from flow_manager import FlowManager
 from ml_model import MLModel
 import subprocess
@@ -246,7 +246,7 @@ def process_packet(pkt):
                     # ------------------ FEATURE EXTRACTION ------------------
 
                     # Convert flow stats into ML-ready feature vector
-                    feature_dict = extract_features(flow)
+                    feature_dict = extract_window_features(flow)
 
                     # Ensure features are in correct order expected by model
                     features = [feature_dict[name] for name in feature_names]
@@ -278,8 +278,19 @@ def process_packet(pkt):
                     # ------------------ ML PREDICTION ------------------
                     # Get probability of malicious class (index 1)
                     # use probability instead of hard prediction
+
                     proba = ml_model.predict_proba([features])[0][1]
 
+                    # Smooth the probability using a simple moving average of the last few predictions for this flow 
+                    # to reduce volatility and false positives from single anomalous packets
+                    flow["probability_history"].append(proba)
+
+                    # Keep last 5 predictions
+                    if len(flow["probability_history"]) > 5:
+                        flow["probability_history"].pop(0)
+
+                    # Calculate smoothed probability for more stable decision making
+                    smoothed_proba = sum(flow["probability_history"]) / len(flow["probability_history"])
 
                 except Exception as e:
                     # If ML fails - default to benign (fail-safe)
@@ -287,7 +298,7 @@ def process_packet(pkt):
                     proba = 0.0  # default to benign if error occurs
 
                 # ------------------ DECISION ------------------
-                if proba > MALICIOUS_THRESHOLD:
+                if smoothed_proba > MALICIOUS_THRESHOLD:
                     # High probability of malicious behaviour - block and log
                     print("\n\n*******************************************")
                     print(f"[ML PREDICTION] {flow['src_ip']} → MALICIOUS (prob={proba:.4f})")
@@ -301,6 +312,8 @@ def process_packet(pkt):
                     print("\n\n*******************************************")
                     print(f"[ML PREDICTION] {flow['src_ip']} → BENIGN (prob={proba:.4f})")
                     print("*******************************************\n\n")
+
+                flow["window_packets"] = flow["window_packets"][flow["step_size"]:]
 
         # ----------- Allow Rules -----------
         

@@ -3,6 +3,8 @@
 import time
 from scapy.layers.inet import IP, TCP, UDP
 
+# added sliding window - but accruacy still behaving as before - but now only fluctuating between 0.0100 and 0.1900 at most (malicious mixed)
+# for normal/maclicious mixed - starts at around 0.3000 - 0.4500 but drops to 0.0100 - 0.0600 and then stays at 0.02000
 FLOW_TIMEOUT = 30  # seconds
 
 class FlowManager:
@@ -120,6 +122,7 @@ class FlowManager:
             self.flows[key] = {
                 "src_ip": pkt[IP].src,  # Original source (defines forward direction)
                 "dst_ip": pkt[IP].dst,  # Original destination
+                "initiator": pkt[IP].src,  # Initiator of the flow
                 "dest_port":dest_port,  # Destination port (informational)
                 "start_time": now,  # First packet timestamp
                 "last_seen": now,   # Last packet timestamp
@@ -128,7 +131,12 @@ class FlowManager:
                 "bwd_packets": 0,   
                 "fwd_bytes": 0,     # Directional byte counts
                 "bwd_bytes": 0,
-                "packet_lengths": [],   # Packet size tracking (for statistics like mean/std later)
+                "packet_lengths": [],  # Packet size tracking (for statistics like mean/std later)
+                "window_packets": [],
+                "window_size": 10,
+                "step_size": 5,
+                "last_window_index": 0,
+                "probability_history": [], 
                 "syn_count": 0,     # TCP flag counters (useful for anomaly detection)
                 "fin_count": 0,
                 "ack_count": 0
@@ -144,6 +152,13 @@ class FlowManager:
         # Get packet length and store it
         pkt_len = len(pkt)
         flow["packet_lengths"].append(pkt_len)
+
+        # Add packet to sliding window
+        flow["window_packets"].append(pkt)
+
+        # Limit memory (optional safety cap)
+        if len(flow["window_packets"]) > 100:
+            flow["window_packets"].pop(0)
 
         # ------------------ UPDATE FLOW ------------------
 
@@ -173,10 +188,14 @@ class FlowManager:
             if pkt[TCP].flags & 0x01:  # FIN:
                 flow["fin_count"] += 1
                 # ACK flag (connection acknowledgment)
-            if pkt[TCP].flags.A:  # ACK:
+            if pkt[TCP].flags & 0x10:  # ACK:
                 flow["ack_count"] += 1
+
+        # detect when window is ready (full) for ml prediction
+        if len(flow["window_packets"]) >= flow["window_size"]:
+            return flow  # signal ready for ML
                 
-        return flow
+        return None  # Not ready for ML yet
 
     def expire_flows(self):
         """
