@@ -1,7 +1,5 @@
 # ml_model.py
 
-from pyexpat import features
-
 import joblib
 import os
 
