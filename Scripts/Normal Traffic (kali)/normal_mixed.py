@@ -5,44 +5,41 @@ import time
 
 TARGET = "10.0.1.2"
 
-TCP_PORTS = [22, 80, 443, 1234]
-UDP_PORTS = [53, 9999, 5005]
+def http_session():
+    print("[NORMAL] HTTP session")
 
-def send_icmp():
-    subprocess.run(["ping", "-c", "1", TARGET],
-                   stdout=subprocess.DEVNULL)
-    print("[ICMP] Sent")
+    for _ in range(50):  # increase burst size
+        subprocess.Popen(
+            ["curl", "-s", f"http://{TARGET}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
 
-def send_tcp():
-    port = random.choice(TCP_PORTS)
-    subprocess.run([
-        "sudo", "hping3",
-        "-S",
-        "-c", "1",
-        "-p", str(port),
-        TARGET
-    ], stdout=subprocess.DEVNULL)
-    print(f"[TCP] Sent SYN to port {port}")
+def dns_burst():
+    print("[NORMAL] DNS burst")
 
-def send_udp():
-    port = random.choice(UDP_PORTS)
-    subprocess.run([
-        "sudo", "hping3",
-        "--udp",
-        "-c", "1",
-        "-p", str(port),
-        TARGET
-    ], stdout=subprocess.DEVNULL)
-    print(f"[UDP] Sent packet to port {port}")
+    for _ in range(20):
+        subprocess.Popen(
+            ["nslookup", TARGET],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
 
 def main():
-    print(f"[+] Sending mixed traffic to {TARGET}")
+    print(f"[+] High-rate normal traffic to {TARGET}")
+
+    actions = [http_session, dns_burst]
+
     try:
         while True:
-            random.choice([send_icmp, send_tcp, send_udp])()
-            time.sleep(1)
+            action = random.choice(actions)
+            action()
+
+            # VERY short pause between bursts
+            time.sleep(0.1)
+
     except KeyboardInterrupt:
-        print("\n[-] Stopped mixed traffic test.")
+        print("\n[-] Stopped normal traffic.")
 
 if __name__ == "__main__":
     main()
