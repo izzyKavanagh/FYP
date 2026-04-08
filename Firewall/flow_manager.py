@@ -5,7 +5,7 @@ from scapy.layers.inet import IP, TCP, UDP
 
 # added sliding window - but accruacy still behaving as before - but now only fluctuating between 0.0100 and 0.1900 at most (malicious mixed)
 # for normal/maclicious mixed - starts at around 0.3000 - 0.4500 but drops to 0.0100 - 0.0600 and then stays at 0.02000
-FLOW_TIMEOUT = 30  # seconds
+FLOW_TIMEOUT = 120  # seconds
 
 class FlowManager:
     def __init__(self):
@@ -39,6 +39,8 @@ class FlowManager:
         # Ensure packet contains an IP layer
         if IP not in pkt:
             return None
+        if TCP not in pkt and UDP not in pkt:
+            return None
 
         # Extract IP-level attributes
         src = pkt[IP].src   # Source IP address
@@ -46,19 +48,13 @@ class FlowManager:
         proto = pkt[IP].proto   # Protocol (TCP=6, UDP=17, etc.)
 
         # Initialize ports (used only for validation here)
-        sport = None
-        dport = None
+        sport = pkt[TCP].sport if TCP in pkt else pkt[UDP].sport
+        dport = pkt[TCP].dport if TCP in pkt else pkt[UDP].dport
 
-        # Extract transport layer ports if available
-        if TCP in pkt:
-            sport = pkt[TCP].sport
-            dport = pkt[TCP].dport
-        elif UDP in pkt:
-            sport = pkt[UDP].sport
-            dport = pkt[UDP].dport
-        else:
-            # Ignore non-TCP/UDP packets
-            return None
+        # Bidirectional key — same key regardless of direction
+        # min(sport, dport) reliably picks the well-known service port
+        # because ephemeral ports (32768-60999) are always higher than
+        # service ports (80, 22, 53 etc.)
 
         # Normalize flow (make it bidirectional) !! fixes issue with flow not accumulating 
         # flow was unidirectional - packets never accumulated 
@@ -71,8 +67,9 @@ class FlowManager:
         # make definition of flow more flexible - only consider IPs and protocol for flow key, ignore ports
         # ensures flows will accumulate even if ports change (e.g. due to NAT or ephemeral ports) - more robust flow tracking
         ip_pair = tuple(sorted([src, dst]))
-        # Final flow key: (IP1, IP2, protocol)
-        return (ip_pair[0], ip_pair[1], proto)
+        # Final flow key: (IP1, IP2, protocol, dest_port)
+        service_port = min(sport, dport)
+        return (ip_pair[0], ip_pair[1], proto, service_port)
 
         # fix prediction accuracy issue - model was trained on flows defined by src/dst IPs and ports, so we need to include ports in flow key for consistency with training data
         #if (src, sport) <= (dst, dport):
@@ -82,6 +79,16 @@ class FlowManager:
 
         # try to find good balance between correct flow accumulation and model accuracy 
         #return (src, dst, proto)
+
+        # Normalize both directions to the same key
+        # by sorting the (ip, port) endpoint pairs
+        #ep1 = (src, sport)
+        #ep2 = (dst, dport)
+
+        #if ep1 > ep2:
+        #    ep1, ep2 = ep2, ep1
+
+        #return (ep1[0], ep1[1], ep2[0], ep2[1], proto)
 
 
     def update_flow(self, pkt):
@@ -104,25 +111,35 @@ class FlowManager:
             return
 
         # Current timestamp
-        now = time.time()
+        now = getattr(pkt, '_injected_time', None) or time.time()
 
         # ------------------ SAFE DEST PORT ------------------
         # Extract destination port safely for storage
         # (even though it is not part of the flow key)
+
         if TCP in pkt:
-            dest_port = pkt[TCP].dport
+            sport = pkt[TCP].sport
+            dport = pkt[TCP].dport
         elif UDP in pkt:
-            dest_port = pkt[UDP].dport
+            sport = pkt[UDP].sport
+            dport = pkt[UDP].dport
         else:
-            # add fallback for non-TCP/UDP packets - return 0 for dest_port to ensure feature extractor can handle it without errors
-            dest_port = 0
+            sport, dport = 0, 0
+
+        dest_port = min(sport, dport)
 
         # If flow does not exist, initialize it
         if key not in self.flows:
+            
+            if sport > dport:
+                initiator = pkt[IP].src   # src is using ephemeral port = client
+            else:
+                initiator = pkt[IP].dst
+
             self.flows[key] = {
                 "src_ip": pkt[IP].src,  # Original source (defines forward direction)
                 "dst_ip": pkt[IP].dst,  # Original destination
-                "initiator": pkt[IP].src,  # Initiator of the flow
+                "initiator": initiator,  # Initiator of the flow
                 "dest_port":dest_port,  # Destination port (informational)
                 "start_time": now,  # First packet timestamp
                 "last_seen": now,   # Last packet timestamp
@@ -133,9 +150,8 @@ class FlowManager:
                 "bwd_bytes": 0,
                 "packet_lengths": [],  # Packet size tracking (for statistics like mean/std later)
                 "window_packets": [],
-                "window_size": 10,
+                "window_size": 100,
                 "step_size": 5,
-                "last_window_index": 0,
                 "probability_history": [], 
                 "syn_count": 0,     # TCP flag counters (useful for anomaly detection)
                 "fin_count": 0,
@@ -156,10 +172,6 @@ class FlowManager:
         # Add packet to sliding window
         flow["window_packets"].append(pkt)
 
-        # Limit memory (optional safety cap)
-        if len(flow["window_packets"]) > 100:
-            flow["window_packets"].pop(0)
-
         # ------------------ UPDATE FLOW ------------------
 
         # Forward direction:
@@ -169,7 +181,7 @@ class FlowManager:
         #   Packet source != original flow source
 
         # Forward direction = original src
-        if pkt[IP].src == flow["src_ip"]:
+        if pkt[IP].src == flow["initiator"]:
             flow["fwd_packets"] += 1
             flow["fwd_bytes"] += pkt_len
         else:
@@ -196,9 +208,73 @@ class FlowManager:
             return flow  # signal ready for ML
                 
         return None  # Not ready for ML yet
+    """
+
+    def update_flow(self, pkt):
+        key = self._get_flow_key(pkt)
+        if key is None:
+            return None
+
+        now = time.time()
+
+        if TCP in pkt:
+            dest_port = pkt[TCP].dport
+        elif UDP in pkt:
+            dest_port = pkt[UDP].dport
+        else:
+            dest_port = 0
+
+        if key not in self.flows:
+            self.flows[key] = {
+                "src_ip": pkt[IP].src,
+                "dst_ip": pkt[IP].dst,
+                "initiator": pkt[IP].src,
+                "dest_port": dest_port,
+                "start_time": now,
+                "last_seen": now,
+                "packet_count": 0,
+                "fwd_packets": 0,
+                "bwd_packets": 0,
+                "fwd_bytes": 0,
+                "bwd_bytes": 0,
+                "packet_lengths": [],
+                "probability_history": [],
+                "syn_count": 0,
+                "fin_count": 0,
+                "ack_count": 0
+            }
+
+        flow = self.flows[key]
+
+        flow["last_seen"] = now
+        flow["packet_count"] += 1
+
+        pkt_len = len(pkt)
+        flow["packet_lengths"].append(pkt_len)
+
+        if pkt[IP].src == flow["initiator"]:
+            flow["fwd_packets"] += 1
+            flow["fwd_bytes"] += pkt_len
+        else:
+            flow["bwd_packets"] += 1
+            flow["bwd_bytes"] += pkt_len
+
+        if TCP in pkt:
+            flags = pkt[TCP].flags
+            if flags & 0x02:
+                flow["syn_count"] += 1
+            if flags & 0x01:
+                flow["fin_count"] += 1
+            if flags & 0x10:
+                flow["ack_count"] += 1
+
+        return None  # NEVER trigger ML here anymore
+    """
+
 
     def expire_flows(self):
         """
+
         Remove and return flows that have been inactive for longer than FLOW_TIMEOUT.
 
         A flow is considered expired if:
@@ -207,6 +283,7 @@ class FlowManager:
         Returns:
             list: Expired flow dictionaries
         """
+
         now = time.time()
         expired = []
 
@@ -222,3 +299,18 @@ class FlowManager:
                 del self.flows[key]
 
         return expired
+
+    """
+    def expire_flows(self):
+        now = time.time()
+        expired = []
+
+        for key in list(self.flows.keys()):
+            flow = self.flows[key]
+
+            if now - flow["last_seen"] > FLOW_TIMEOUT:
+                expired.append(flow)
+                del self.flows[key]
+
+        return expired
+    """
