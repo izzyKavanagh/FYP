@@ -1,5 +1,6 @@
 import numpy as np
-from scapy.layers.inet import IP
+from scapy.layers.inet import IP, TCP
+
 
 def extract_features(flow):
     """
@@ -17,6 +18,7 @@ def extract_features(flow):
         dict: Feature name -> value
               (Later converted to ordered list using feature_names)
     """
+
 
     # ------------------ DURATION ------------------
 
@@ -104,6 +106,42 @@ def extract_features(flow):
         # - Useful for distinguishing normal vs abnormal traffic
         "ACK Flag Count": flow["ack_count"]
     }
+"""
+
+def extract_features(flow):
+    duration = flow["last_seen"] - flow["start_time"]
+
+    if duration <= 0:
+        duration = 1e-6
+
+    duration *= 1e6  # microseconds
+
+    packet_lengths = flow["packet_lengths"]
+
+    if len(packet_lengths) > 1:
+        mean_len = np.mean(packet_lengths)
+        std_len = np.std(packet_lengths)
+    elif len(packet_lengths) == 1:
+        mean_len = packet_lengths[0]
+        std_len = 0.0
+    else:
+        mean_len = 0
+        std_len = 0
+
+    return {
+        "Destination Port": flow["dest_port"],
+        "Flow Duration": duration,
+        "Total Fwd Packets": flow["fwd_packets"],
+        "Total Backward Packets": flow["bwd_packets"],
+        "Total Length of Fwd Packets": flow["fwd_bytes"],
+        "Total Length of Bwd Packets": flow["bwd_bytes"],
+        "Packet Length Mean": mean_len,
+        "Packet Length Std": std_len,
+        "SYN Flag Count": flow["syn_count"],
+        "FIN Flag Count": flow["fin_count"],
+        "ACK Flag Count": flow["ack_count"]
+    }
+"""
 
 def extract_window_features(flow):
     packets = flow["window_packets"][-flow["window_size"]:]
@@ -142,4 +180,59 @@ def extract_window_features(flow):
         "SYN Flag Count": flow["syn_count"],
         "FIN Flag Count": flow["fin_count"],
         "ACK Flag Count": flow["ack_count"]
+    }
+
+def extract_window_features_2(flow):
+    packets = flow["window_packets"][-flow["window_size"]:]
+
+    if len(packets) < 2:
+        return None  # not enough data
+
+    initiator = flow["initiator"]
+
+    # --- Per-window packet stats ---
+    fwd_packets = 0
+    fwd_bytes = 0
+    packet_lengths = []
+    syn_count = 0
+    fin_count = 0
+    ack_count = 0
+
+    # Timestamps for window duration
+    timestamps = []
+
+    for pkt in packets:
+        pkt_len = len(pkt)
+        packet_lengths.append(pkt_len)
+
+        # Capture timestamp (injected or real)
+        ts = getattr(pkt, '_injected_time', None) or float(pkt.time)
+        timestamps.append(ts)
+
+        if pkt[IP].src == initiator:
+            fwd_packets += 1
+            fwd_bytes += pkt_len
+
+        # TCP flags — per window, not cumulative
+        if TCP in pkt:
+            flags = pkt[TCP].flags
+            if flags & 0x02: syn_count += 1
+            if flags & 0x01: fin_count += 1
+            if flags & 0x10: ack_count += 1
+
+    total_packets = len(packets)
+    window_duration = max(timestamps[-1] - timestamps[0], 1e-6)  # seconds
+
+    return {
+        "dest_port":           flow["dest_port"],
+        "window_duration":     window_duration,
+        "fwd_packet_rate":     fwd_packets / window_duration,
+        "fwd_byte_rate":       fwd_bytes / window_duration,
+        "pkt_len_mean":        np.mean(packet_lengths),
+        "pkt_len_std":         np.std(packet_lengths),
+        "pkt_len_min":         np.min(packet_lengths),
+        "pkt_len_max":         np.max(packet_lengths),
+        "syn_ratio":           syn_count / total_packets,
+        "fin_ratio":           fin_count / total_packets,
+        "ack_ratio":           ack_count / total_packets,
     }
