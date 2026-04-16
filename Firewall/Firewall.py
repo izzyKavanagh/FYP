@@ -11,7 +11,24 @@ from flow_manager import FlowManager # for tracking active flows and their stati
 from ml_model import MLModel # wrapper for loading and using the ML model
 import subprocess # for blocking IPs with iptables
 import numpy as np # for handling NaN/infinite values in features
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
+#------------------------- GUI SETUP -----------------------
+# Define metrics — Prometheus scrapes these automatically
+packets_allowed  = Counter("firewall_packets_allowed_total", "Total packets allowed")
+packets_blocked  = Counter("firewall_packets_blocked_total", "Total packets blocked", ["reason"])
+ml_probability   = Gauge("firewall_ml_probability", "Current ML probability", ["src_ip"])
+ml_predictions   = Counter("firewall_ml_predictions_total", "ML predictions", ["result"])
+active_flows     = Gauge("firewall_active_flows", "Number of active flows")
+blacklist_size   = Gauge("firewall_blacklist_size", "IPs currently blacklisted")
+# Tracks total packets dropped due to ML decisions
+# (combines verdict drops + blacklist drops from ML-detected IPs)
+# This is more meaningful than prediction count for showing ML impact
+ml_blocks = Counter("firewall_ml_blocks_total", "Packets blocked due to ML detection", ["stage"]) 
+# Start metrics server on port 8000
+start_http_server(8000)
+
+#------------------ GLOBALS ------------------
 flow_manager = FlowManager()
 
 # Load the pre-trained machine learning model (random forest)
@@ -223,6 +240,14 @@ def is_blacklisted(ip):
         del blacklist[ip]
         remove_block_ip(ip)   # also remove iptables rule
         print(f"[BLACKLIST EXPIRED] {ip} unblocked")
+
+        # Reset ML verdict for all flows from this IP
+        # so it gets re-evaluated rather than staying permanently malicious
+        for flow in flow_manager.flows.values():
+            if flow["src_ip"] == ip or flow["initiator"] == ip:
+                flow["ml_verdict"]          = "benign"
+                flow["probability_history"] = []
+                print(f"[FLOW RESET] {ip} flow verdict cleared")
         return False
     return True
 
@@ -308,6 +333,10 @@ def process_packet(pkt):
             # - Keep flow table efficient
             # Remove expired flows to save memory
             flow_manager.expire_flows()
+
+             # ---- PROMETHEUS METRICS UPDATE ----
+            active_flows.set(len(flow_manager.flows))
+            blacklist_size.set(len(blacklist))
             process_packet.counter = 0
 
         # ------------------ FLOW UPDATE ------------------
@@ -326,6 +355,8 @@ def process_packet(pkt):
         if is_blacklisted(scapy_pkt.src):
             info = extract_print_info(scapy_pkt)
             log_event("BLOCK", "ML blacklist", "inbound", info)
+            packets_blocked.labels(reason="ml_blacklist").inc()
+            ml_blocks.labels(stage="blacklist").inc()  # Increment ML block counter for blacklist stage
             pkt.drop()
             return
 
@@ -429,7 +460,8 @@ def process_packet(pkt):
 
                         # Calculate smoothed probability for more stable decision making
                         smoothed_proba = sum(flow["probability_history"]) / len(flow["probability_history"])
-                        
+                        ml_probability.labels(src_ip=flow["src_ip"]).set(smoothed_proba)
+
                         # ------------------ GROUND TRUTH ------------------
                        # Convert probability to prediction
                         y_pred = 1 if smoothed_proba > MALICIOUS_THRESHOLD else 0
@@ -445,10 +477,16 @@ def process_packet(pkt):
                             # High probability of malicious behaviour - block and log
                             print("\n\n*******************************************")
                             print(f"[ML PREDICTION] {flow['src_ip']} → MALICIOUS (prob={proba:.4f}, smoothed_prob={smoothed_proba:.4f})")
+                            # label for monitoring purposes - count how many times ML predicted malicious vs benign
+                            ml_predictions.labels(result="malicious").inc()
                             # Add to blacklist if not already present
-                            #if not is_blacklisted(flow["src_ip"]):
-                            #    add_to_blacklist(flow["src_ip"])
-                            #    block_ip(flow["src_ip"])
+                            if not is_blacklisted(flow["src_ip"]):
+                                add_to_blacklist(flow["src_ip"])
+                                block_ip(flow["src_ip"])
+                                packets_blocked.labels(reason="ml_blacklist").inc()
+
+                            # Mark the flow itself as malicious so current packet is also dropped
+                            flow["ml_verdict"] = "malicious"
                             print("*******************************************\n\n")
 
                             #print("\n[FALSE POSITIVE DEBUG]")
@@ -461,14 +499,28 @@ def process_packet(pkt):
                             print("\n\n*******************************************")
                             print(f"[ML PREDICTION] {flow['src_ip']} → BENIGN (prob={proba:.4f}, smoothed_prob={smoothed_proba:.4f})")
                             print("*******************************************\n\n")
-
+                            # label for monitoring purposes - count how many times ML predicted malicious vs benign
+                            ml_predictions.labels(result="benign").inc()
+                            flow["ml_verdict"] = "benign"
+    
                         flow["window_packets"] = flow["window_packets"][flow["step_size"]:]
-                
+
                 except Exception as e:
                     # If ML fails - default to benign (fail-safe)
                     print(f"[ML ERROR] {e}")
                     flow["window_packets"] = \
                         flow["window_packets"][flow["step_size"]:]
+                    
+            pass
+
+        # ------------------ ML VERDICT CHECK ------------------
+        # If ML has classified this flow as malicious, drop immediately
+        # This ensures the current packet is also blocked, not just future ones
+        if flow and flow.get("ml_verdict") == "malicious":
+            packets_blocked.labels(reason="ml_verdict").inc()
+            ml_blocks.labels(stage="verdict").inc()     # ← add this
+            pkt.drop()
+            return
 
         # ----------- Allow Rules -----------
         
@@ -476,6 +528,7 @@ def process_packet(pkt):
         # Allow established TCP (ACK packets) - helps performance by not running ML on every packet of an established connection
         if scapy_pkt.haslayer(TCP) and scapy_pkt[TCP].flags & 0x10:
             pkt.accept()
+            packets_allowed.inc()
             return
         
         # NOTE: move before ml block - so established connections are allowed without running ML every time (improves performance and reduces false positives on established connections)
@@ -483,6 +536,7 @@ def process_packet(pkt):
         if is_established(scapy_pkt):
             #log_event("ALLOW", "connection tracking", "inbound", info)
             pkt.accept()
+            packets_allowed.inc()
             return
         
         # Allow all ICMP traffic
@@ -490,6 +544,7 @@ def process_packet(pkt):
             direction = "inbound"
             #log_event("ALLOW", "ICMP allowed", direction, info)
             pkt.accept()
+            packets_allowed.inc()
             return
 
         # Allow HTTP and HTTPS traffic
@@ -497,6 +552,7 @@ def process_packet(pkt):
             #log_event("ALLOW", "HTTP/HTTPS allowed", "outbound", info)
             track_connection(scapy_pkt)
             pkt.accept()
+            packets_allowed.inc()
             return
         
         # Allow DNS queries
@@ -504,6 +560,7 @@ def process_packet(pkt):
             #log_event("ALLOW", "DNS query", "outbound", info)
             track_connection(scapy_pkt)
             pkt.accept()
+            packets_allowed.inc()
             return
         
         # ------------------ DEFAULT POLICY: DENY ------------------
@@ -512,6 +569,7 @@ def process_packet(pkt):
         # This is a "default deny" firewall strategy
         #log_event("BLOCK", "default deny", "outbound", info)
         pkt.drop()
+        packets_blocked.labels(reason="default_deny").inc()
         
     # ------------------ GLOBAL ERROR HANDLER ------------------
     # Catch-all for unexpected errors to avoid dropping packets accidentally

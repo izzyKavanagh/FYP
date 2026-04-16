@@ -155,7 +155,8 @@ class FlowManager:
                 "probability_history": [], 
                 "syn_count": 0,     # TCP flag counters (useful for anomaly detection)
                 "fin_count": 0,
-                "ack_count": 0
+                "ack_count": 0,
+                "ml_verdict": "benign",   # add this line to track ML verdict for the flow (default to benign until ML says otherwise)
             }
 
         # Retrieve existing flow and update it
