@@ -49,10 +49,10 @@ feature_names = joblib.load("features.pkl")
 # Set this manually per experiment
 GROUND_TRUTH = 0  # 1 = attack, 0 = normal
 FILENAME           = f"ml_results_{GROUND_TRUTH}.csv"
-ML_ENABLED         = True # change toggle to false 
-MODE               = "ml_enabled" # change to "ml_enabled" or rules_only
+ML_ENABLED         = False # change toggle to True/False 
+MODE               = "rules_only" # change to "ml_enabled" or rules_only
 EXPERIMENT_LOG     = f"experiment_{MODE}.csv"
-MALICIOUS_THRESHOLD = 0.8
+MALICIOUS_THRESHOLD = 0.7
 BLACKLIST_DURATION  = 60      # seconds
 # NOTE: should also implement cleanup of old connections to prevent memory leaks
 CONNECTION_TTL      = 300     # 5 minutes — typical TCP connection lifetime
@@ -346,7 +346,7 @@ def run_ml(flow):
         return None
 
     try:
-        feature_dict = extract_window_features_2(flow)
+        feature_dict = extract_window_features(flow)
 
         if feature_dict is None:
             # Slide window and bail — not enough usable data
@@ -379,7 +379,7 @@ def run_ml(flow):
             ml_predictions.labels(result="malicious").inc()
             flow["ml_verdict"] = "malicious"
 
-            if ML_ENABLED and not is_blacklisted(flow["src_ip"]):
+            if not is_blacklisted(flow["src_ip"]):
                 add_to_blacklist(flow["src_ip"])
                 block_ip(flow["src_ip"])
         else:
@@ -484,7 +484,7 @@ def process_packet(pkt):
 
         # ------------------ ML FLOW ANALYSIS ----------------------
 
-        if flow:
+        if ML_ENABLED and flow:
             # Clear stale history on very long-lived flows
             if time.time() - flow["start_time"] > 300:
                 flow["probability_history"] = []
