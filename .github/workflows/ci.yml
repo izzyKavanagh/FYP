@@ -33,9 +33,9 @@ jobs:
           pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
  
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=$PYTHONPATH:$PWD" >> $GITHUB_ENV
+
       - name: Run unit tests
         run: |
-          pytest Firewall/Tests/flow_manager_tests.py \
-                 Firewall/Tests/feature_extractor_tests.py \
-                 Firewall/Tests/firewall_tests.py \
-                 -v --tb=short
+          pytest Firewall/Tests -v --tb=short

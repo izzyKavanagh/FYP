@@ -2,7 +2,7 @@ import time
 import pytest
 from unittest.mock import patch, MagicMock
 from scapy.layers.inet import IP
-from Firewall.Tests.test_helper import make_tcp_pkt, make_udp_pkt
+from test_helper import make_tcp_pkt, make_udp_pkt
 
 @pytest.fixture(autouse=True)
 def patch_firewall_side_effects(monkeypatch):
