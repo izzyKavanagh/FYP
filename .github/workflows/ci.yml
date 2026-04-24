@@ -26,9 +26,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt install -y \
             build-essential \
-            python3-dev \
-            libnetfilter-queue-dev \
-            libnfnetlink-dev
+            python3-dev
  
       - name: Install Python dependencies
         run: |
