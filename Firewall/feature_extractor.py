@@ -142,7 +142,7 @@ def extract_features(flow):
         "ACK Flag Count": flow["ack_count"]
     }
 """
-
+"""
 def extract_window_features(flow):
     packets = flow["window_packets"][-flow["window_size"]:]
 
@@ -181,58 +181,78 @@ def extract_window_features(flow):
         "FIN Flag Count": flow["fin_count"],
         "ACK Flag Count": flow["ack_count"]
     }
+"""
 
-def extract_window_features_2(flow):
+def extract_window_features(flow):
     packets = flow["window_packets"][-flow["window_size"]:]
-
     if len(packets) < 2:
-        return None  # not enough data
+        return None
 
     initiator = flow["initiator"]
-
-    # --- Per-window packet stats ---
     fwd_packets = 0
+    bwd_packets = 0
     fwd_bytes = 0
+    bwd_bytes = 0
     packet_lengths = []
-    syn_count = 0
-    fin_count = 0
-    ack_count = 0
-
-    # Timestamps for window duration
+    syn_count = fin_count = ack_count = rst_count = psh_count = 0
     timestamps = []
+    inter_arrival_times = []
 
-    for pkt in packets:
+    for i, pkt in enumerate(packets):
         pkt_len = len(pkt)
         packet_lengths.append(pkt_len)
-
-        # Capture timestamp (injected or real)
         ts = getattr(pkt, '_injected_time', None) or float(pkt.time)
         timestamps.append(ts)
+
+        if i > 0:
+            inter_arrival_times.append(ts - timestamps[i-1])
 
         if pkt[IP].src == initiator:
             fwd_packets += 1
             fwd_bytes += pkt_len
+        else:
+            bwd_packets += 1
+            bwd_bytes += pkt_len
 
-        # TCP flags — per window, not cumulative
         if TCP in pkt:
             flags = pkt[TCP].flags
             if flags & 0x02: syn_count += 1
             if flags & 0x01: fin_count += 1
             if flags & 0x10: ack_count += 1
+            if flags & 0x04: rst_count += 1   # NEW: RST flag
+            if flags & 0x08: psh_count += 1   # NEW: PSH flag (data push)
 
     total_packets = len(packets)
-    window_duration = max(timestamps[-1] - timestamps[0], 1e-6)  # seconds
+    window_duration = max(timestamps[-1] - timestamps[0], 1e-6)
+
+    iat_mean = np.mean(inter_arrival_times) if inter_arrival_times else 0
+    iat_std  = np.std(inter_arrival_times)  if inter_arrival_times else 0
+    iat_min  = np.min(inter_arrival_times)  if inter_arrival_times else 0
+
+    # Ratio of fwd to bwd traffic — very high = potential scan or exfil
+    fwd_bwd_ratio = fwd_packets / max(bwd_packets, 1)
+    # Byte ratio — captures asymmetric flows (amplification, exfil)
+    byte_ratio = fwd_bytes / max(bwd_bytes, 1)
 
     return {
-        "dest_port":           flow["dest_port"],
-        "window_duration":     window_duration,
-        "fwd_packet_rate":     fwd_packets / window_duration,
-        "fwd_byte_rate":       fwd_bytes / window_duration,
-        "pkt_len_mean":        np.mean(packet_lengths),
-        "pkt_len_std":         np.std(packet_lengths),
-        "pkt_len_min":         np.min(packet_lengths),
-        "pkt_len_max":         np.max(packet_lengths),
-        "syn_ratio":           syn_count / total_packets,
-        "fin_ratio":           fin_count / total_packets,
-        "ack_ratio":           ack_count / total_packets,
+        "dest_port":        flow["dest_port"],
+        "window_duration":  window_duration,
+        "fwd_packet_rate":  fwd_packets / window_duration,
+        "fwd_byte_rate":    fwd_bytes / window_duration,
+        "bwd_packet_rate":  bwd_packets / window_duration,   # NEW
+        "bwd_byte_rate":    bwd_bytes / window_duration,     # NEW
+        "pkt_len_mean":     np.mean(packet_lengths),
+        "pkt_len_std":      np.std(packet_lengths),
+        "pkt_len_min":      np.min(packet_lengths),
+        "pkt_len_max":      np.max(packet_lengths),
+        "syn_ratio":        syn_count / total_packets,
+        "fin_ratio":        fin_count / total_packets,
+        "ack_ratio":        ack_count / total_packets,
+        "rst_ratio":        rst_count / total_packets,       # NEW
+        "psh_ratio":        psh_count / total_packets,       # NEW
+        "fwd_bwd_ratio":    fwd_bwd_ratio,                   # NEW
+        "byte_ratio":       byte_ratio,                      # NEW
+        "iat_mean":         iat_mean,                        # NEW
+        "iat_std":          iat_std,                         # NEW
+        "iat_min":          iat_min,                         # NEW
     }
