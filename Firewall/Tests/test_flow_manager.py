@@ -6,7 +6,7 @@ class TestFlowManagerFlowKey:
     """_get_flow_key must produce consistent, bidirectional keys."""
  
     def setup_method(self):
-        from flow_manager import FlowManager
+        from Firewall.flow_manager import FlowManager
         self.fm = FlowManager()
  
     def test_tcp_packet_returns_key(self):
@@ -42,7 +42,7 @@ class TestFlowManagerUpdateFlow:
     """update_flow must correctly initialise and accumulate flow state."""
  
     def setup_method(self):
-        from flow_manager import FlowManager
+        from Firewall.flow_manager import FlowManager
         self.fm = FlowManager()
  
     def test_new_flow_created(self):
@@ -81,7 +81,7 @@ class TestFlowManagerUpdateFlow:
  
     def test_window_packets_capped_after_slide(self):
         """After the window slides, window_packets length should shrink."""
-        from flow_manager import FlowManager
+        from Firewall.flow_manager import FlowManager
         fm = FlowManager()
         for _ in range(100):
             fm.update_flow(make_tcp_pkt(flags="A"))
@@ -101,7 +101,7 @@ class TestFlowManagerExpiry:
     """expire_flows must remove stale flows without touching active ones."""
  
     def setup_method(self):
-        from flow_manager import FlowManager
+        from Firewall.flow_manager import FlowManager
         self.fm = FlowManager()
  
     def test_expired_flow_removed(self):

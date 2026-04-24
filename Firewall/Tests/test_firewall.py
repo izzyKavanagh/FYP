@@ -38,11 +38,10 @@ class TestBlacklist:
  
     def _fresh_firewall(self):
         """Re-import firewall with a clean blacklist each test."""
-        import importlib
         import sys
         # Remove cached module so blacklist dict starts empty
-        sys.modules.pop("firewall", None)
-        import firewall as fw
+        sys.modules.pop("Firewall.firewall", None)
+        import Firewall.firewall as fw
         fw.blacklist.clear()
         return fw
  
@@ -74,8 +73,8 @@ class TestConnectionTracking:
  
     def _fresh_firewall(self):
         import sys
-        sys.modules.pop("firewall", None)
-        import firewall as fw
+        sys.modules.pop("Firewall.firewall", None)
+        import Firewall.firewall as fw
         fw.connection_table.clear()
         return fw
  
@@ -153,8 +152,8 @@ class TestExtractConnectionInfo:
  
     def _fresh_firewall(self):
         import sys
-        sys.modules.pop("firewall", None)
-        import firewall as fw
+        sys.modules.pop("Firewall.firewall", None)
+        from Firewall import firewall as fw
         return fw
  
     def test_tcp_returns_correct_info(self):

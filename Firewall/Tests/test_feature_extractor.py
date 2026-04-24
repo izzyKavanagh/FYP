@@ -42,20 +42,20 @@ class TestExtractWindowFeatures:
     """extract_window_features must return a complete, valid feature dict."""
  
     def test_returns_dict(self):
-        from feature_extractor import extract_window_features
+        from Firewall.feature_extractor import extract_window_features
         flow = _make_flow_with_packets(10)
         result = extract_window_features(flow)
         assert isinstance(result, dict)
  
     def test_returns_none_for_single_packet(self):
         """A window of 1 packet has no inter-arrival time — should return None."""
-        from feature_extractor import extract_window_features
+        from Firewall.feature_extractor import extract_window_features
         flow = _make_flow_with_packets(1)
         result = extract_window_features(flow)
         assert result is None
  
     def test_all_expected_keys_present(self):
-        from feature_extractor import extract_window_features
+        from Firewall.feature_extractor import extract_window_features
         EXPECTED = {
             "dest_port", "window_duration",
             "fwd_packet_rate", "fwd_byte_rate",
@@ -75,7 +75,7 @@ class TestExtractWindowFeatures:
     def test_no_nan_or_inf_values(self):
         """Every value must be finite — the firewall cleans NaN/inf but the
         extractor itself should not produce them under normal conditions."""
-        from feature_extractor import extract_window_features
+        from Firewall.feature_extractor import extract_window_features
         flow = _make_flow_with_packets(20)
         result = extract_window_features(flow)
         assert result is not None
@@ -83,7 +83,7 @@ class TestExtractWindowFeatures:
             assert np.isfinite(v), f"Feature '{k}' is not finite: {v}"
  
     def test_packet_rates_positive(self):
-        from feature_extractor import extract_window_features
+        from Firewall.feature_extractor import extract_window_features
         flow = _make_flow_with_packets(20)
         result = extract_window_features(flow)
         assert result["fwd_packet_rate"] >= 0
@@ -91,7 +91,7 @@ class TestExtractWindowFeatures:
  
     def test_zero_bwd_traffic_handled(self):
         """Flows with no backward traffic must not crash (div-by-zero guard)."""
-        from feature_extractor import extract_window_features
+        from Firewall.feature_extractor import extract_window_features
         flow = _make_flow_with_packets(20)
         # All packets are forward — bwd_bytes stays 0
         result = extract_window_features(flow)
@@ -104,7 +104,7 @@ class TestExtractFeatures:
     """extract_features (full-flow, non-windowed) smoke tests."""
  
     def test_returns_dict_with_core_keys(self):
-        from feature_extractor import extract_features
+        from Firewall.feature_extractor import extract_features
         flow = _make_flow_with_packets(10)
         result = extract_features(flow)
         assert "Destination Port" in result
@@ -112,7 +112,7 @@ class TestExtractFeatures:
         assert "SYN Flag Count" in result
  
     def test_none_dest_port_replaced_with_zero(self):
-        from feature_extractor import extract_features
+        from Firewall.feature_extractor import extract_features
         flow = _make_flow_with_packets(10)
         flow["dest_port"] = None
         result = extract_features(flow)
