@@ -1,6 +1,6 @@
 import time
 import numpy as np
-from test_helper import make_tcp_pkt
+from Firewall.Tests.test_helper import make_tcp_pkt
 
 def _make_flow_with_packets(n=10, src="1.1.1.1", dst="2.2.2.2",
                             sport=50000, dport=80, payload_size=50):

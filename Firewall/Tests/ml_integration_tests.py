@@ -1,5 +1,5 @@
 import joblib
-from feature_extractor import extract_features
+from Firewall.feature_extractor import extract_features
 
 ml_model = joblib.load("rf_model.pkl")
 

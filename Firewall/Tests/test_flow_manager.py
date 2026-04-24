@@ -1,6 +1,6 @@
 import time
 from scapy.layers.inet import IP
-from test_helper import make_tcp_pkt, make_udp_pkt
+from Firewall.Tests.test_helper import make_tcp_pkt, make_udp_pkt
 
 class TestFlowManagerFlowKey:
     """_get_flow_key must produce consistent, bidirectional keys."""
