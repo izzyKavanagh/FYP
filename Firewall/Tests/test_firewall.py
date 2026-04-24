@@ -152,8 +152,13 @@ class TestExtractConnectionInfo:
  
     def _fresh_firewall(self):
         import sys
+        import importlib
+
         sys.modules.pop("Firewall.firewall", None)
-        from Firewall import firewall as fw
+
+        import Firewall.firewall
+        fw = importlib.reload(Firewall.firewall)
+
         return fw
  
     def test_tcp_returns_correct_info(self):
