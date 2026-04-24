@@ -58,7 +58,7 @@ class TestBlacklist:
         fw = self._fresh_firewall()
         # Set expiry in the past
         fw.blacklist["9.9.9.9"] = time.time() - 1
-        with patch("firewall.remove_block_ip"):   # don't run iptables
+        with patch("Firewall.firewall.remove_block_ip"):   # don't run iptables
             result = fw.is_blacklisted("9.9.9.9")
         assert result is False
         assert "9.9.9.9" not in fw.blacklist
