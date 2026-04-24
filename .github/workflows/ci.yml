@@ -35,7 +35,7 @@ jobs:
  
       - name: Run unit tests
         run: |
-          pytest tests/test_flow_manager.py \
-                 tests/test_feature_extractor.py \
-                 tests/test_firewall.py \
+          pytest Firewall/Tests/flow_manager_tests.py \
+                 Firewall/Tests/feature_extractor_tests.py \
+                 Firewall/Tests/firewall_tests.py \
                  -v --tb=short
