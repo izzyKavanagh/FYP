@@ -148,7 +148,7 @@ def process_packet(pkt):
             else:
                 # Use keys from the feature dict directly — avoids column misalignment
                 flow_id = flow["flow_id"]
-                # if extract_window_features_2 ever changes key order
+
                 feature_keys = [k for k in FIELDNAMES if k not in ("flow_id", "label")]
 
                 row_flow_id = f"{flow['flow_id']}_w{flow['window_index']}"
