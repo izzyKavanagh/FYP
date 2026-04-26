@@ -6,6 +6,9 @@ This project implements a stateful packet-filtering firewall enhanced with a Ran
 
 The system was developed and evaluated within a controlled three-node GNS3 network emulation environment. It detects five attack categories that a static rule set permits unconditionally: SYN flood, HTTP flood, DNS amplification, stealth port scan, and data exfiltration.
 
+## Screencast
+[Screencast Here](https://screenrec.com/share/avZmei3NUh)
+
 ## Features
 
 - Stateful connection tracking with TCP session establishment and teardown handling
