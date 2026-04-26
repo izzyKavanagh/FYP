@@ -222,27 +222,27 @@ def is_blacklisted(ip):
         return False
     return True
 
-#def add_to_blacklist(ip):
-#    """Add IP to blacklist with expiry time"""
-#    expiry = time.time() + BLACKLIST_DURATION
-#    blacklist[ip] = expiry
-#    print(f"[BLACKLISTED] {ip} until {datetime.fromtimestamp(expiry).strftime('%H:%M:%S')}")
+def add_to_blacklist(ip):
+    """Add IP to blacklist with expiry time"""
+    expiry = time.time() + BLACKLIST_DURATION
+    blacklist[ip] = expiry
+    print(f"[BLACKLISTED] {ip} until {datetime.fromtimestamp(expiry).strftime('%H:%M:%S')}")
     
-#def block_ip(ip):
-#    """
-#    Block the given IP using iptables.
-#    Adds a rule to drop all incoming traffic from this IP.
-#    """
-#    subprocess.run([
-#        "sudo",
-#        "iptables",
-#        "-A",
-#        "INPUT",
-#        "-s",
-#        ip,
-#       "-j",
-#        "DROP"
-#    ])
+def block_ip(ip):
+    """
+    Block the given IP using iptables.
+    Adds a rule to drop all incoming traffic from this IP.
+    """
+    subprocess.run([
+        "sudo",
+        "iptables",
+        "-A",
+        "INPUT",
+        "-s",
+        ip,
+       "-j",
+        "DROP"
+    ])
 
 def remove_block_ip(ip):
     """Remove iptables block rule for this IP"""
@@ -379,9 +379,9 @@ def run_ml(flow):
             ml_predictions.labels(result="malicious").inc()
             flow["ml_verdict"] = "malicious"
 
-            #if not is_blacklisted(flow["src_ip"]):
-                #add_to_blacklist(flow["src_ip"])
-                #block_ip(flow["src_ip"])
+            if not is_blacklisted(flow["src_ip"]):
+                add_to_blacklist(flow["src_ip"])
+                block_ip(flow["src_ip"])
         else:
             print(f"[ML] BENIGN    {flow['src_ip']} prob={proba:.3f} smoothed={smoothed:.3f}")
             ml_predictions.labels(result="benign").inc()
@@ -463,15 +463,15 @@ def process_packet(pkt):
         # ---------------- ML BLACKLIST CHECK ----------------
 
         # check if source IP is already in ML blacklist (i.e.: classified as malicious) - if so, block and log
-        #if is_blacklisted(scapy_pkt.src):
+        if is_blacklisted(scapy_pkt.src):
             #info = extract_print_info(scapy_pkt)
-            #log_event("BLOCK", "ML blacklist", "inbound", info)
-        #    packets_blocked.labels(reason="ml_blacklist").inc()
-        #    ml_blocks.labels(stage="blacklist").inc()  # Increment ML block counter for blacklist stage
-        #    _ml_block_count += 1   # module counter for experiment log
-        #    _blocked_total += 1   # also increment total block count for experiment logging
-        #    pkt.drop()
-        #    return
+            log_event("BLOCK", "ML blacklist", "inbound", info)
+            packets_blocked.labels(reason="ml_blacklist").inc()
+            ml_blocks.labels(stage="blacklist").inc()  # Increment ML block counter for blacklist stage
+            _ml_block_count += 1   # module counter for experiment log
+            _blocked_total += 1   # also increment total block count for experiment logging
+            pkt.drop()
+            return
         
         # ------------------ FLOW UPDATE ------------------
         
